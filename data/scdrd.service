@@ -1,0 +1,38 @@
+[Unit]
+Description=SCDR process scheduling daemon
+# Both renice the same processes; running two priority daemons makes them fight.
+Conflicts=ananicy-cpp.service com.system76.Scheduler.service system76-scheduler.service
+After=dbus.service
+
+[Service]
+Type=dbus
+BusName=org.scdr.Daemon1
+ExecStart=/usr/bin/scdrd
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2s
+
+# Only what scdrd needs: change other processes' scheduling (SYS_NICE),
+# listen to process events (NET_ADMIN), write their oom_score_adj
+# (SYS_RESOURCE, DAC_OVERRIDE) and read their exe links (SYS_PTRACE).
+CapabilityBoundingSet=CAP_SYS_NICE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_SYS_PTRACE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+# Needs /proc/sys/kernel/sched_autogroup_enabled.
+ProtectKernelTunables=no
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,48 @@
+# Maintainer: SCDR contributors
+#
+# Builds from this source tree: `cd packaging/arch && makepkg -si`.
+# For the AUR, replace _root with a source=() git URL and add checksums.
+
+pkgname=scdr
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Process scheduling and priority daemon for EEVDF and sched_ext kernels"
+arch=('x86_64' 'aarch64')
+url="https://github.com/your-name/scdr"
+license=('MPL-2.0')
+depends=('gcc-libs' 'glibc' 'dbus')
+makedepends=('cargo')
+optdepends=('scx-scheds: sched_ext schedulers (used from milestone 4)')
+
+_root="$(realpath "$startdir/../..")"
+
+prepare() {
+  cd "$_root"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_root"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$_root"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo test --frozen --release
+}
+
+package() {
+  cd "$_root"
+  install -Dm755 "$srcdir/target/release/scdrd" "$pkgdir/usr/bin/scdrd"
+  install -Dm755 "$srcdir/target/release/scdrctl" "$pkgdir/usr/bin/scdrctl"
+  install -Dm644 data/scdr.toml "$pkgdir/usr/share/scdr/scdr.toml"
+  install -dm755 "$pkgdir/usr/share/scdr/rules.d" "$pkgdir/etc/scdr/rules.d"
+  install -Dm644 data/scdrd.service "$pkgdir/usr/lib/systemd/system/scdrd.service"
+  install -Dm644 data/org.scdr.Daemon1.conf "$pkgdir/usr/share/dbus-1/system.d/org.scdr.Daemon1.conf"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/scdr/README.md"
+}
