@@ -1,11 +1,13 @@
 //! Daemon state: which processes exist, what applies to them, and why.
 
+mod control;
 mod knobs;
 mod lineage;
 mod pressure;
 mod report;
 mod roles;
 
+pub use control::{ProcessReport, WidgetState};
 pub use pressure::cpu_some_avg10;
 pub use roles::SessionReport;
 mod units;
@@ -110,6 +112,8 @@ pub struct Service {
     power_profile: Option<String>,
     cpu_pressure: Option<f64>,
     pressure_active: bool,
+    paused: bool,
+    roles_off: std::collections::BTreeSet<crate::config::Role>,
     /// Scheduler policy status lines, from the main loop.
     pub policy_report: Vec<String>,
     started: Instant,
@@ -131,6 +135,8 @@ impl Service {
             power_profile: None,
             cpu_pressure: None,
             pressure_active: false,
+            paused: false,
+            roles_off: Default::default(),
             policy_report: Vec::new(),
             started: Instant::now(),
             self_pid: std::process::id(),
@@ -208,22 +214,13 @@ impl Service {
 
     /// Restores every process scdr changed, and the autogroup setting.
     pub fn shutdown(&mut self) {
-        let mut reverted = 0;
-        for (pid, entry) in self.procs.iter_mut() {
-            if let State::Managed(m) = &entry.state {
-                if !self.dry_run {
-                    apply::apply(*pid, &m.original, &[m.target], false);
-                }
-                reverted += 1;
-                entry.state = State::Unmatched;
-            }
-        }
-        tracing::info!("restored {reverted} processes");
-        self.restore_units();
-        self.restore_system();
+        self.restore_all();
     }
 
     fn evaluate(&mut self, pid: u32, trigger: Trigger) {
+        if self.paused {
+            return;
+        }
         let Ok(info) = ProcInfo::read(pid) else {
             self.procs.remove(&pid);
             return;

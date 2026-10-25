@@ -192,8 +192,12 @@ mod tests {
 
     #[test]
     fn short_run_produces_samples() {
+        // One step above our current nice: an unprivileged thread may only
+        // raise it, and scdr itself may already have reniced this test.
+        let tid = unsafe { libc::gettid() } as u32;
+        let load_nice = (sched::get_attr(tid).unwrap().nice + 1).min(19);
         let r = run(
-            &Scenario::new("t", None, Some(1000), Some(3)),
+            &Scenario::new("t", None, Some(1000), Some(load_nice)),
             &Options { duration: Duration::from_millis(200), interval: Duration::from_millis(1), load_threads: 2 },
         );
         assert!(r.samples > 50, "{r:?}");

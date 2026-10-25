@@ -67,6 +67,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let mut service = Service::new(config, args.dry_run);
+    service.load_runtime();
 
     if args.once {
         service.startup();
@@ -126,8 +127,10 @@ async fn main() -> anyhow::Result<()> {
     // Exec re-checks all use the same delay, so a FIFO queue stays ordered.
     let mut rechecks: VecDeque<(Instant, u32, u64)> = VecDeque::new();
 
-    // Pressure sampling and scheduler policy run on a short tick.
+    // Pressure sampling and scheduler policy run on a short tick, which also
+    // publishes the State property when it changes.
     let mut policy = Policy::default();
+    let mut last_state = String::new();
     let mut tick = tokio::time::interval(Duration::from_secs(2));
 
     let mut hup = signal(SignalKind::hangup())?;
@@ -172,7 +175,12 @@ async fn main() -> anyhow::Result<()> {
                     policy_step(&mut policy, bus.as_ref(), &service).await;
                 }
             }
-            _ = tick.tick() => policy_step(&mut policy, bus.as_ref(), &service).await,
+            _ = tick.tick() => {
+                policy_step(&mut policy, bus.as_ref(), &service).await;
+                if let Some(conn) = &bus {
+                    publish_state(conn, &service, &mut last_state).await;
+                }
+            }
             _ = hup.recv() => {
                 match Config::load(&paths) {
                     Ok(config) => {
@@ -195,6 +203,11 @@ async fn main() -> anyhow::Result<()> {
 
 /// Samples CPU pressure, then brings the scheduler and EEVDF knobs in line.
 async fn policy_step(policy: &mut Policy, bus: Option<&zbus::Connection>, service: &Arc<Mutex<Service>>) {
+    if service.lock().unwrap().is_paused() {
+        policy.restore(bus).await; // a no-op once restored
+        service.lock().unwrap().policy_report = vec!["paused: scheduler and EEVDF knobs left as they were".into()];
+        return;
+    }
     let (sched_ext, eevdf, power, gaming) = {
         let mut svc = service.lock().unwrap();
         if let Some(avg10) = cpu_some_avg10() {
@@ -248,5 +261,17 @@ async fn next_item<S: Stream + Unpin>(stream: &mut Option<S>) -> Option<S::Item>
     match stream {
         Some(s) => s.next().await,
         None => std::future::pending().await,
+    }
+}
+
+/// Emits PropertiesChanged for `State` when the summary differs from the last one.
+async fn publish_state(conn: &zbus::Connection, service: &Arc<Mutex<Service>>, last: &mut String) {
+    let now = serde_json::to_string(&service.lock().unwrap().widget_state()).unwrap_or_default();
+    if now == *last {
+        return;
+    }
+    *last = now;
+    if let Ok(iface) = conn.object_server().interface::<_, Daemon>(OBJECT_PATH).await {
+        let _ = iface.get().await.state_changed(iface.signal_emitter()).await;
     }
 }

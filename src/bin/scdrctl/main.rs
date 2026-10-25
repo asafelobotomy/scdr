@@ -1,5 +1,7 @@
 //! scdrctl: inspect and control the SCDR daemon.
 
+mod import;
+
 use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand};
 use scdr::config::{Config, Paths};
@@ -47,8 +49,23 @@ enum Command {
         #[command(flatten)]
         paths: PathArgs,
     },
-    /// Ask the daemon to reload its configuration (root only).
+    /// Ask the daemon to reload its configuration (root, or polkit).
     Reload,
+    /// List managed processes with their profile and the rule or role behind it.
+    Ps {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Restore everything scdr changed and stop changing anything (polkit).
+    Pause,
+    /// Resume after `pause` (polkit).
+    Resume,
+    /// Turn a role on or off: game, audio, foreground, background (polkit).
+    Role {
+        role: String,
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+    },
     /// Measure wake-up latency of an interactive thread under full CPU load,
     /// with and without scdr's levers (slice, nice). Run with scdrd stopped.
     Bench {
@@ -83,7 +100,7 @@ enum Command {
 }
 
 #[derive(Subcommand)]
-enum ImportFrom {
+pub(crate) enum ImportFrom {
     /// A directory of ananicy .types/.rules files (e.g. /etc/ananicy.d).
     Ananicy {
         dir: PathBuf,
@@ -102,7 +119,7 @@ enum ImportFrom {
 }
 
 #[derive(Args)]
-struct PathArgs {
+pub(crate) struct PathArgs {
     #[arg(long, global = true, default_value = scdr::config::ETC_DIR)]
     etc_dir: PathBuf,
     #[arg(long, global = true, default_value = scdr::config::SHARE_DIR)]
@@ -110,7 +127,7 @@ struct PathArgs {
 }
 
 impl PathArgs {
-    fn load(&self) -> anyhow::Result<Config> {
+    pub(crate) fn load(&self) -> anyhow::Result<Config> {
         let paths = Paths {
             etc: self.etc_dir.clone(),
             share: self.share_dir.clone(),
@@ -139,7 +156,9 @@ async fn daemon() -> anyhow::Result<Daemon1Proxy<'static>> {
 fn not_running(e: zbus::Error) -> anyhow::Error {
     if let zbus::Error::MethodError(name, _, _) = &e {
         if name.as_str() == "org.freedesktop.DBus.Error.AccessDenied" {
-            return anyhow::anyhow!("{e}\nThis needs root: try `run0 scdrctl reload` or `systemctl reload scdrd`.");
+            return anyhow::anyhow!(
+                "{e}\nThis needs root or polkit authorization for org.scdr.control (authentication was cancelled or failed)."
+            );
         }
     }
     anyhow::anyhow!("{e}\nIs scdrd running? Try `systemctl status scdrd`, or use --offline.")
@@ -147,6 +166,9 @@ fn not_running(e: zbus::Error) -> anyhow::Error {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
+    // Exit quietly when piped into `head` and the like.
+    // SAFETY: restoring the default SIGPIPE disposition before any output.
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     match Cli::parse().command {
         Command::Status { json } => {
             let raw = daemon().await?.status().await.map_err(not_running)?;
@@ -192,7 +214,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("  {}", f.display());
             }
         }
-        Command::Import { from, output, paths } => import(from, output, &paths)?,
+        Command::Import { from, output, paths } => import::import(from, output, &paths)?,
         Command::Bench { duration, interval_us, load, repeat, json } => {
             let cpus = std::thread::available_parallelism().map_or(4, |n| n.get());
             let opt = scdr::bench::Options {
@@ -237,6 +259,30 @@ async fn main() -> anyhow::Result<()> {
                 .init();
             scdr::agent::run().await?;
         }
+        Command::Ps { json } => {
+            let raw = daemon().await?.processes().await.map_err(not_running)?;
+            if json {
+                println!("{raw}");
+            } else {
+                let procs: Vec<scdr::service::ProcessReport> = serde_json::from_str(&raw)?;
+                println!("{:>7}  {:<18} {:<16} WHY", "PID", "PROFILE", "NAME");
+                for p in procs {
+                    println!("{:>7}  {:<18} {:<16} {}", p.pid, p.profile, p.name, p.why);
+                }
+            }
+        }
+        Command::Pause => {
+            daemon().await?.pause().await.map_err(not_running)?;
+            println!("paused: priorities, unit weights and scheduler restored");
+        }
+        Command::Resume => {
+            daemon().await?.resume().await.map_err(not_running)?;
+            println!("resumed");
+        }
+        Command::Role { role, state } => {
+            daemon().await?.set_role_enabled(&role, state == "on").await.map_err(not_running)?;
+            println!("{role} role {state}");
+        }
         Command::Reload => {
             let summary = daemon().await?.reload().await.map_err(not_running)?;
             println!("reloaded: {summary}");
@@ -258,49 +304,6 @@ fn resolve(target: &str) -> anyhow::Result<Vec<u32>> {
         bail!("no process named {target:?}");
     }
     Ok(pids)
-}
-
-fn import(from: ImportFrom, output: Option<PathBuf>, paths: &PathArgs) -> anyhow::Result<()> {
-    // Imported rules go first, so by default skip names our rules already cover.
-    let current = paths.load().ok();
-    let imp = match from {
-        ImportFrom::Ananicy { dir, only, keep_overlaps } => {
-            let covered = |name: &str| {
-                !keep_overlaps
-                    && current
-                        .as_ref()
-                        .is_some_and(|c| c.rules.find(&scdr::import::synthetic(name)).is_some())
-            };
-            scdr::import::ananicy::import(&dir, &only, &covered)?
-        }
-        ImportFrom::System76 { files } => scdr::import::system76::import(&files)?,
-    };
-    let files = current.map(|c| c.files).unwrap_or_default();
-    imp.validate(&files)
-        .map_err(|e| anyhow::anyhow!("the converted rules don't load: {e}"))?;
-
-    let toml = imp.to_toml();
-    match &output {
-        Some(path) => std::fs::write(path, &toml).with_context(|| format!("writing {}", path.display()))?,
-        None => print!("{toml}"),
-    }
-    eprintln!(
-        "imported {} profiles, {} rules ({} patterns){}",
-        imp.profile_count(),
-        imp.rule_count(),
-        imp.pattern_count(),
-        output.map(|p| format!(" into {}", p.display())).unwrap_or_default()
-    );
-    if !imp.skipped.is_empty() {
-        eprintln!("not imported ({}):", imp.skipped.len());
-        for s in imp.skipped.iter().take(12) {
-            eprintln!("  {s}");
-        }
-        if imp.skipped.len() > 12 {
-            eprintln!("  … and {} more", imp.skipped.len() - 12);
-        }
-    }
-    Ok(())
 }
 
 fn list(config: &Config, all: bool) {

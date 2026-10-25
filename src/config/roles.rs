@@ -18,7 +18,7 @@ use std::fmt;
 use std::path::Path;
 
 /// Highest precedence first. `Background` only applies under CPU pressure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Game,
@@ -37,6 +37,17 @@ impl Role {
             Role::Foreground => "in the focused window's app",
             Role::Background => "in an app that isn't focused, while the CPU is under pressure",
         }
+    }
+}
+
+impl std::str::FromStr for Role {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Role::ALL
+            .into_iter()
+            .find(|r| r.to_string() == s)
+            .ok_or_else(|| format!("unknown role {s:?} (game, audio, foreground, background)"))
     }
 }
 

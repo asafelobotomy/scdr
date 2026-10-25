@@ -10,6 +10,11 @@ use crate::procfs::ProcInfo;
 use crate::units::{self, UnitId, Weights};
 use serde::{Deserialize, Serialize};
 
+/// Scopes are transient: once their processes exit, the unit is gone.
+fn forget_when_stopped(unit: &str) -> bool {
+    unit.ends_with(".scope")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnitState {
     pub original: Weights,
@@ -112,10 +117,17 @@ impl Service {
         let ids: Vec<UnitId> = self.units.keys().cloned().collect();
         for id in ids {
             let st = &self.units[&id];
-            if !std::path::Path::new(&format!("/sys/fs/cgroup{}", st.cgroup)).exists() {
-                self.units.remove(&id); // transient scope ended
-            } else if !self.holds_claim(st.owner) {
-                self.restore_unit(&id);
+            let running = std::path::Path::new(&format!("/sys/fs/cgroup{}", st.cgroup)).exists();
+            match (running, forget_when_stopped(&id.unit)) {
+                // A transient scope that ended is gone, weights and all.
+                (false, true) => {
+                    self.units.remove(&id);
+                }
+                // A stopped service keeps its runtime weights (an on-demand
+                // daemon starts again with them), so restore them now.
+                (false, false) => self.restore_unit(&id),
+                (true, _) if !self.holds_claim(st.owner) => self.restore_unit(&id),
+                (true, _) => {}
             }
         }
     }
@@ -155,5 +167,15 @@ impl Service {
     /// Units whose weights scdr actually changed.
     pub(super) fn unit_count(&self) -> usize {
         self.units.values().filter(|s| s.applied != s.original).count()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn stopped_services_are_restored_not_forgotten() {
+        assert!(super::forget_when_stopped("app-firefox-1234.scope"));
+        assert!(!super::forget_when_stopped("pamac-daemon.service"));
+        assert!(!super::forget_when_stopped("app-org.telegram.desktop@autostart.service"));
     }
 }

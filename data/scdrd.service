@@ -10,6 +10,8 @@ BusName=org.scdr.Daemon1
 ExecStart=/usr/bin/scdrd
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
+# Pause and role switches persist here (runtime.json).
+StateDirectory=scdr
 RestartSec=2s
 
 # Only what scdrd needs: change other processes' scheduling (SYS_NICE),

@@ -1,0 +1,15 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [{ "Name": "asafelobotomy" }],
+        "Category": "System Information",
+        "Description": "Status and quick controls for the SCDR scheduling daemon",
+        "Icon": "preferences-system-performance",
+        "Id": "org.scdr.widget",
+        "License": "MPL-2.0",
+        "Name": "SCDR",
+        "Version": "0.1.0",
+        "Website": "https://github.com/asafelobotomy/scdr"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

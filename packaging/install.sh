@@ -14,8 +14,12 @@ install -dm755 "$dest/usr/share/scdr/rules.d" "$dest/etc/scdr/rules.d"
 install -Dm644 data/scdrd.service "$dest/usr/lib/systemd/system/scdrd.service"
 install -Dm644 data/scdr-session.service "$dest/usr/lib/systemd/user/scdr-session.service"
 install -Dm644 data/org.scdr.Daemon1.conf "$dest/usr/share/dbus-1/system.d/org.scdr.Daemon1.conf"
+install -Dm644 data/org.scdr.policy "$dest/usr/share/polkit-1/actions/org.scdr.policy"
 install -Dm644 -t "$dest/usr/share/gnome-shell/extensions/$ext" \
   "data/gnome-shell/$ext/metadata.json" "data/gnome-shell/$ext/extension.js"
+widget=data/plasmoid/org.scdr.widget
+install -Dm644 "$widget/metadata.json" "$dest/usr/share/plasma/plasmoids/org.scdr.widget/metadata.json"
+install -Dm644 "$widget/contents/ui/main.qml" "$dest/usr/share/plasma/plasmoids/org.scdr.widget/contents/ui/main.qml"
 install -Dm644 README.md "$dest/usr/share/doc/scdr/README.md"
 install -Dm644 DESIGN.md "$dest/usr/share/doc/scdr/DESIGN.md"
 install -Dm644 LICENSE "$dest/usr/share/licenses/scdr/LICENSE"

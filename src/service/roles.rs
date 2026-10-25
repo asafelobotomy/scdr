@@ -135,7 +135,9 @@ impl Service {
                 }
             }
         };
-        let role = Role::ALL.into_iter().find(|r| roles.get(*r).is_some() && active(*r))?;
+        let role = Role::ALL
+            .into_iter()
+            .find(|r| self.role_enabled(*r) && roles.get(*r).is_some() && active(*r))?;
         let profile = self.config.profiles.get(roles.get(role)?)?.clone();
         let rule = RuleRef {
             source: "role".into(),

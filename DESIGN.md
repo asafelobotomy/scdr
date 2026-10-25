@@ -137,6 +137,17 @@ bring in the CachyOS game list (about 13.5k entries) without curating it by hand
    AUR `scdr` / `scdr-git` PKGBUILDs sharing `packaging/install.sh`; MPL-2.0.
    First benchmark: weight differences help waking tasks, shorter slices didn't.
 
+## 7a. GUI
+
+A Plasma 6 panel widget (`data/plasmoid`), pure QML on Plasma's D-Bus QML
+module: it binds to the daemon's `State` property (a JSON summary, emitted
+through PropertiesChanged when it changes, at most every 2 s) and calls
+`Pause`, `Resume` and `SetRoleEnabled`. Those, and `Reload`, need root or
+polkit's `org.scdr.control` (`auth_admin_keep`); pause and role switches
+persist in `/var/lib/scdr/runtime.json`. A full app (Kirigami via cxx-qt,
+or Slint for other desktops) can build on the same API, plus `Processes()`
+and `Explain()`.
+
 ## 8. Conventions
 
 - No source file over 400 lines (enforced by `tests/file_length.rs`).

@@ -5,6 +5,9 @@ use crate::system;
 
 impl Service {
     pub(super) fn apply_system(&mut self) {
+        if self.paused {
+            return;
+        }
         self.apply_autogroup();
         self.apply_iocost();
     }

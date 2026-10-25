@@ -88,13 +88,26 @@ cargo run --bin scdrctl -- list --share-dir data
 cargo run --bin scdrd -- --dry-run --once --share-dir data
 ```
 
+## Panel widget (KDE Plasma 6)
+
+The package installs a Plasma widget: right-click the panel, *Add or Manage
+Widgets*, search for "SCDR". It shows the active scheduler, CPU pressure and
+power profile, switches each role on or off, lists the apps boosted right now
+(grouped by app), and pauses or resumes scdr. It's plain QML talking to scdrd
+over the system bus and follows the daemon's `State` property, so it doesn't
+poll. Changing anything needs root or polkit's `org.scdr.control`, which asks
+for your password and remembers it for a few minutes.
+
 ## Using it
 
 ```sh
 scdrctl status            # daemon state, managed counts, autogroup/sched_ext/io facts
 scdrctl explain plasmashell
 scdrctl explain 1234 --offline   # evaluate the config without the daemon
-scdrctl list [--all]      # which profile each process would get
+scdrctl list [--all]      # which profile each process would get (offline)
+scdrctl ps                # what scdrd is applying right now, and why
+scdrctl pause | resume    # restore everything / start again (polkit)
+scdrctl role background off   # switch a role off or on (polkit)
 scdrctl check             # validate config files
 systemctl reload scdrd    # or: scdrctl reload (root)
 ```

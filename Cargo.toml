@@ -15,7 +15,7 @@ path = "src/bin/scdrd.rs"
 
 [[bin]]
 name = "scdrctl"
-path = "src/bin/scdrctl.rs"
+path = "src/bin/scdrctl/main.rs"
 
 [dependencies]
 anyhow = "1"
