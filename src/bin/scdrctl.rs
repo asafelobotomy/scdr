@@ -87,6 +87,11 @@ async fn daemon() -> anyhow::Result<Daemon1Proxy<'static>> {
 }
 
 fn not_running(e: zbus::Error) -> anyhow::Error {
+    if let zbus::Error::MethodError(name, _, _) = &e {
+        if name.as_str() == "org.freedesktop.DBus.Error.AccessDenied" {
+            return anyhow::anyhow!("{e}\nThis needs root: try `run0 scdrctl reload` or `systemctl reload scdrd`.");
+        }
+    }
     anyhow::anyhow!("{e}\nIs scdrd running? Try `systemctl status scdrd`, or use --offline.")
 }
 

@@ -41,6 +41,8 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| "info".into()),
         )
         .with_writer(std::io::stderr)
+        // No colour codes in the journal.
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .without_time() // journald adds timestamps
         .with_target(false)
         .init();
