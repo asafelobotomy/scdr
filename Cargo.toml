@@ -5,6 +5,8 @@ edition = "2024"
 rust-version = "1.85"
 description = "Process scheduling and priority daemon for EEVDF and sched_ext kernels"
 license = "MPL-2.0"
+repository = "https://github.com/asafelobotomy/scdr"
+readme = "README.md"
 publish = false
 
 [[bin]]
@@ -20,11 +22,12 @@ anyhow = "1"
 futures-util = "0.3"
 clap = { version = "4", features = ["derive"] }
 globset = "0.4"
+kdl = { version = "6", features = ["v1"] }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "signal", "sync", "time"] }
 toml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

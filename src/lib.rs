@@ -2,9 +2,11 @@
 
 pub mod agent;
 pub mod apply;
+pub mod bench;
 pub mod config;
 pub mod dbus;
 pub mod explain;
+pub mod import;
 pub mod policy;
 pub mod procfs;
 pub mod rules;

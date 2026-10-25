@@ -1,0 +1,45 @@
+# Maintainer: asafelobotomy <213836723+asafelobotomy@users.noreply.github.com>
+
+pkgname=scdr
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Process scheduling and priority daemon for EEVDF and sched_ext kernels"
+arch=('x86_64' 'aarch64')
+url="https://github.com/asafelobotomy/scdr"
+license=('MPL-2.0')
+depends=('libgcc' 'glibc' 'dbus' 'systemd')
+optdepends=('scx-scheds: sched_ext schedulers ([sched_ext])'
+            'scx-tools: scx_loader, which scdr drives ([sched_ext])'
+            'pipewire: audio-client role (pw-dump)'
+            'gamemode: game role'
+            'power-profiles-daemon: per-power-profile roles')
+install=scdr.install
+makedepends=('cargo')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+# After tagging v$pkgver on GitHub, replace with the real checksum: updpkgsums
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo test --frozen --release
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  ./packaging/install.sh "$pkgdir" target/release
+}

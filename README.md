@@ -6,9 +6,10 @@ sched_ext kernels (6.12+). It's a modern successor to
 ananicy-cpp, GameMode and scx-loader. See [DESIGN.md](DESIGN.md) for the
 reasoning and the roadmap.
 
-**Status: milestone 4 (system policy).** Rule-based per-process priorities,
-systemd unit weights, live roles for the focused app, audio and games,
-pressure-driven background demotion, and sched_ext / EEVDF policy.
+**Status: milestone 5.** Rule-based per-process priorities, systemd unit
+weights, live roles for the focused app, audio and games, pressure-driven
+background demotion, sched_ext / EEVDF policy, rule importers, and a latency
+benchmark. Packaged for the AUR (`packaging/aur`).
 
 ## What it does
 
@@ -44,7 +45,10 @@ pressure-driven background demotion, and sched_ext / EEVDF policy.
   - `game`: processes registered with GameMode
 
   A per-user session agent (`scdrctl agent`, run by `scdr-session.service`)
-  reports these; scdrd only accepts pids owned by the calling user. Roles can
+  reports these. Focus comes from a KWin script on Plasma, Hyprland's or
+  niri's IPC, or the bundled GNOME Shell extension (`gnome-extensions enable
+  scdr-foreground@scdr`); the Hyprland, niri and GNOME paths are tested
+  against their documented event formats but not yet on those desktops; scdrd only accepts pids owned by the calling user. Roles can
   differ per power-profiles-daemon profile, e.g. no foreground boost on
   power-saver.
 - Under CPU pressure (PSI above `[pressure] high`), apps that aren't focused
@@ -111,6 +115,43 @@ profile = "my-renderer"
 name = ["blender"]
 cmdline = ["* -b *"]   # background renders only
 ```
+
+## Importing ananicy-cpp and system76-scheduler rules
+
+```sh
+# The CachyOS/ananicy game list (~13.5k names) as one rule:
+scdrctl import ananicy /etc/ananicy.d --only Game -o /etc/scdr/rules.d/50-ananicy.toml
+# system76-scheduler config and extra assignments:
+scdrctl import system76 /etc/system76-scheduler/config.kdl \
+    /etc/system76-scheduler/process-scheduler/*.kdl -o /etc/scdr/rules.d/50-system76.toml
+systemctl reload scdrd
+```
+
+Imported profiles are prefixed (`ananicy-`, `s76-`). rules.d files are tried
+before the shipped config, so the ananicy importer skips names your rules
+already match (`--keep-overlaps` to include them), and `--only` limits it to
+the types you want. Importing everything also brings CachyOS's opinions with
+it: NetworkManager as a background service, or `bash` at nice -4. The
+output is checked with scdr's own config loader before it's written.
+
+## Benchmark
+
+`scdrctl bench --repeat 5` measures how late an interactive-style thread
+(1 ms sleeps) wakes while twice as many busy threads as CPUs run, under
+scdr's levers. Run it with scdrd stopped. One run on an i5-8300H (8 CPUs,
+EEVDF, kernel 7.1), medians of 5 rounds:
+
+| scenario | p99 | max | load throughput |
+|---|---|---|---|
+| baseline | 794 µs | 8.3 ms | 100% |
+| probe slice 2000 / 1000 / 500 µs | 1.1–1.3 ms | 4.8–14 ms | ~100% |
+| load at nice 5 (background) | 468 µs | 2.8 ms | ~90% |
+| slice 1000 µs + load nice 5 | 706 µs | 2.9 ms | ~90% |
+
+Lowering the competing load's priority (nice, `CPUWeight`) is what helps a
+waking task. A shorter EEVDF slice made no measurable difference for this
+sleep/wake pattern, so the default `slice_us` values are not yet justified by
+data. Measure on your hardware before relying on them.
 
 ## Contributing
 

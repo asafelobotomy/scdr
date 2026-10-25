@@ -186,12 +186,14 @@ pub(crate) struct RawRule {
     pub cmdline: Option<Patterns>,
     pub cgroup: Option<Patterns>,
     pub parent: Option<Patterns>,
+    pub ancestor: Option<Patterns>,
     pub uid: Option<Vec<u32>>,
     pub not_name: Option<Patterns>,
     pub not_exe: Option<Patterns>,
     pub not_cmdline: Option<Patterns>,
     pub not_cgroup: Option<Patterns>,
     pub not_parent: Option<Patterns>,
+    pub not_ancestor: Option<Patterns>,
 }
 
 #[derive(Debug, Default, Deserialize)]

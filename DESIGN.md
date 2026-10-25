@@ -132,9 +132,10 @@ bring in the CachyOS game list (about 13.5k entries) without curating it by hand
 4. **System policy** (done). scx_loader integration with hand-override back-off,
    EEVDF base slice / preempt per power profile, PSI-driven background role
    (sampled every 2 s, with hysteresis).
-5. **Ecosystem.** ananicy and system76 importers, GNOME/Hyprland/niri agents, AUR
-   release, a benchmark harness (input latency with `cyclictest`/`schbench`, frame times
-   during a `makepkg`).
+5. **Ecosystem** (done). `scdrctl import ananicy|system76`; Hyprland, niri and
+   GNOME Shell foreground sources; `scdrctl bench` (wake-up latency under load);
+   AUR `scdr` / `scdr-git` PKGBUILDs sharing `packaging/install.sh`; MPL-2.0.
+   First benchmark: weight differences help waking tasks, shorter slices didn't.
 
 ## 8. Conventions
 

@@ -1,0 +1,7 @@
+{
+  "uuid": "scdr-foreground@scdr",
+  "name": "SCDR foreground",
+  "description": "Reports the focused window to the SCDR session agent, so scdrd can give that app the foreground profile.",
+  "shell-version": ["45", "46", "47", "48", "49"],
+  "url": "https://github.com/asafelobotomy/scdr"
+}

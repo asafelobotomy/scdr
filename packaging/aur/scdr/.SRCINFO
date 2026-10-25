@@ -1,0 +1,23 @@
+pkgbase = scdr
+	pkgdesc = Process scheduling and priority daemon for EEVDF and sched_ext kernels
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/asafelobotomy/scdr
+	install = scdr.install
+	arch = x86_64
+	arch = aarch64
+	license = MPL-2.0
+	makedepends = cargo
+	depends = libgcc
+	depends = glibc
+	depends = dbus
+	depends = systemd
+	optdepends = scx-scheds: sched_ext schedulers ([sched_ext])
+	optdepends = scx-tools: scx_loader, which scdr drives ([sched_ext])
+	optdepends = pipewire: audio-client role (pw-dump)
+	optdepends = gamemode: game role
+	optdepends = power-profiles-daemon: per-power-profile roles
+	source = scdr-0.1.0.tar.gz::https://github.com/asafelobotomy/scdr/archive/refs/tags/v0.1.0.tar.gz
+	sha256sums = SKIP
+
+pkgname = scdr

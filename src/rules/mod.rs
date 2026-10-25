@@ -57,12 +57,14 @@ struct RuleMatchers {
     cmdline: Option<Matcher>,
     cgroup: Option<Matcher>,
     parent: Option<Matcher>,
+    ancestor: Option<Matcher>,
     uid: Option<Vec<u32>>,
     not_name: Option<Matcher>,
     not_exe: Option<Matcher>,
     not_cmdline: Option<Matcher>,
     not_cgroup: Option<Matcher>,
     not_parent: Option<Matcher>,
+    not_ancestor: Option<Matcher>,
 }
 
 impl Rule {
@@ -84,12 +86,14 @@ impl Rule {
             cmdline: field("cmdline", &raw.cmdline)?,
             cgroup: field("cgroup", &raw.cgroup)?,
             parent: field("parent", &raw.parent)?,
+            ancestor: field("ancestor", &raw.ancestor)?,
             uid: raw.uid.clone(),
             not_name: field("not_name", &raw.not_name)?,
             not_exe: field("not_exe", &raw.not_exe)?,
             not_cmdline: field("not_cmdline", &raw.not_cmdline)?,
             not_cgroup: field("not_cgroup", &raw.not_cgroup)?,
             not_parent: field("not_parent", &raw.not_parent)?,
+            not_ancestor: field("not_ancestor", &raw.not_ancestor)?,
         };
         if let Some(uids) = &raw.uid {
             let _ = write!(conditions, "{}uid={uids:?}", if conditions.is_empty() { "" } else { " " });
@@ -100,9 +104,10 @@ impl Rule {
             || m.cmdline.is_some()
             || m.cgroup.is_some()
             || m.parent.is_some()
+            || m.ancestor.is_some()
             || m.uid.is_some();
         if !positive {
-            return Err("rule needs at least one of name, exe, cmdline, cgroup, parent, uid".into());
+            return Err("rule needs at least one of name, exe, cmdline, cgroup, parent, ancestor, uid".into());
         }
 
         Ok(Rule {
@@ -114,8 +119,8 @@ impl Rule {
         })
     }
 
-    /// `parent` is the parent's comm; only read when the rule asks for it.
-    pub fn matches(&self, p: &ProcInfo, parent: &mut dyn FnMut() -> Option<String>) -> bool {
+    /// Ancestry is only read from /proc when the rule asks for it.
+    pub fn matches(&self, p: &ProcInfo, lineage: &mut Lineage) -> bool {
         let m = &self.m;
         let names = p.names();
         let exe = p.exe.as_deref().unwrap_or("");
@@ -141,12 +146,49 @@ impl Rule {
             }
         }
         if m.parent.is_some() || m.not_parent.is_some() {
-            let parent = parent().unwrap_or_default();
+            let parent = lineage.chain().first().cloned().unwrap_or_default();
             if !pos(&m.parent, &|x| x.is_match(&parent)) || !neg(&m.not_parent, &|x| x.is_match(&parent)) {
                 return false;
             }
         }
+        if m.ancestor.is_some() || m.not_ancestor.is_some() {
+            let chain: Vec<&str> = lineage.chain().iter().map(String::as_str).collect();
+            if !pos(&m.ancestor, &|x| x.any(&chain)) || !neg(&m.not_ancestor, &|x| x.any(&chain)) {
+                return false;
+            }
+        }
         true
+    }
+}
+
+/// A process's ancestors' names (parent first), read from /proc on first use.
+pub struct Lineage {
+    ppid: u32,
+    chain: Option<Vec<String>>,
+}
+
+impl Lineage {
+    pub fn new(p: &ProcInfo) -> Self {
+        Lineage { ppid: p.ppid, chain: None }
+    }
+
+    /// Pre-filled, for tests and importers.
+    pub fn known(chain: Vec<String>) -> Self {
+        Lineage { ppid: 0, chain: Some(chain) }
+    }
+
+    pub fn chain(&mut self) -> &[String] {
+        let ppid = self.ppid;
+        self.chain.get_or_insert_with(|| {
+            let mut out = Vec::new();
+            let mut pid = ppid;
+            while pid > 1 && out.len() < 32 {
+                let Some(comm) = crate::procfs::comm(pid) else { break };
+                out.push(comm);
+                pid = crate::procfs::Stat::read(pid).map(|s| s.ppid).unwrap_or(0);
+            }
+            out
+        })
     }
 }
 
@@ -178,13 +220,11 @@ impl RuleSet {
     }
 
     pub fn find(&self, p: &ProcInfo) -> Option<&Rule> {
-        let mut parent_cache: Option<Option<String>> = None;
-        let mut parent = || {
-            parent_cache
-                .get_or_insert_with(|| crate::procfs::comm(p.ppid))
-                .clone()
-        };
-        self.rules.iter().find(|r| r.matches(p, &mut parent))
+        self.find_with(p, &mut Lineage::new(p))
+    }
+
+    pub fn find_with(&self, p: &ProcInfo, lineage: &mut Lineage) -> Option<&Rule> {
+        self.rules.iter().find(|r| r.matches(p, lineage))
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Rule> {
@@ -238,107 +278,4 @@ impl Exceptions {
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::config::Config;
-    use crate::procfs::ProcInfo;
-    use std::path::PathBuf;
-
-    fn proc(comm: &str, exe: &str, cgroup: &str) -> ProcInfo {
-        ProcInfo {
-            pid: 4242,
-            ppid: 1,
-            start_time: 1,
-            comm: comm.into(),
-            exe: Some(exe.into()),
-            cmdline: vec![exe.into(), "--flag".into()],
-            cgroup: cgroup.into(),
-            uid: 1000,
-            kthread: false,
-        }
-    }
-
-    fn rules(toml: &str) -> Config {
-        let base = "[profile.a]\nnice = 1\n[profile.b]\nnice = 2\n";
-        Config::from_sources(vec![(PathBuf::from("t.toml"), format!("{base}{toml}"))]).unwrap()
-    }
-
-    #[test]
-    fn first_match_wins_and_globs_cross_slashes() {
-        let c = rules(
-            r#"
-            [[rule]]
-            profile = "a"
-            name = ["kwin_*"]
-            [[rule]]
-            profile = "b"
-            cgroup = "/user.slice/*"
-            "#,
-        );
-        let kwin = proc("kwin_wayland", "/usr/bin/kwin_wayland", "/user.slice/user-1000.slice/session.slice/plasma-kwin_wayland.service");
-        let app = proc("firefox", "/usr/lib/firefox/firefox", "/user.slice/user-1000.slice/user@1000.service/app.slice/app-firefox.scope");
-        assert_eq!(c.rules.find(&kwin).unwrap().profile, "a");
-        assert_eq!(c.rules.find(&app).unwrap().profile, "b");
-        assert!(c.rules.find(&proc("sshd", "/usr/bin/sshd", "/system.slice/sshd.service")).is_none());
-    }
-
-    #[test]
-    fn negations_and_uid() {
-        let c = rules(
-            r#"
-            [[rule]]
-            profile = "a"
-            cgroup = "/system.slice/*"
-            not_cgroup = "/system.slice/sddm.service"
-            uid = [0]
-            "#,
-        );
-        let mut nm = proc("NetworkManager", "/usr/bin/NetworkManager", "/system.slice/NetworkManager.service");
-        nm.uid = 0;
-        assert!(c.rules.find(&nm).is_some());
-        let mut xorg = proc("Xorg", "/usr/lib/Xorg", "/system.slice/sddm.service");
-        xorg.uid = 0;
-        assert!(c.rules.find(&xorg).is_none());
-        nm.uid = 1000;
-        assert!(c.rules.find(&nm).is_none());
-    }
-
-    #[test]
-    fn exe_and_cmdline() {
-        let c = rules(
-            r#"
-            [[rule]]
-            profile = "a"
-            cmdline = "*/steamapps/common/*"
-            [[rule]]
-            profile = "b"
-            exe = "/usr/bin/pipewire*"
-            "#,
-        );
-        let mut game = proc("wine64-preloade", "/usr/bin/wine64-preloader", "");
-        game.cmdline = vec!["/home/u/.steam/steam/steamapps/common/Foo/foo.exe".into()];
-        assert_eq!(c.rules.find(&game).unwrap().profile, "a");
-        assert_eq!(c.rules.find(&proc("pipewire-pulse", "/usr/bin/pipewire-pulse", "")).unwrap().profile, "b");
-    }
-
-    #[test]
-    fn rule_without_positive_condition_is_rejected() {
-        let e = Config::from_sources(vec![(
-            PathBuf::from("t.toml"),
-            "[profile.a]\nnice = 1\n[[rule]]\nprofile = \"a\"\nnot_name = \"x\"\n".into(),
-        )])
-        .unwrap_err();
-        assert!(e.to_string().contains("at least one"), "{e}");
-    }
-
-    #[test]
-    fn exceptions_and_launchers() {
-        let c = Config::from_sources(vec![(
-            PathBuf::from("t.toml"),
-            "[exceptions]\nname = [\"systemd\"]\nlaunchers = [\"gamemoderun\", \"chrt\"]\n".into(),
-        )])
-        .unwrap();
-        assert_eq!(c.exceptions.exception(&proc("systemd", "/usr/lib/systemd/systemd", "")), Some("systemd"));
-        assert_eq!(c.exceptions.launcher(&proc("chrt", "/usr/bin/chrt", "")), Some("chrt"));
-        assert!(c.exceptions.launcher(&proc("bash", "/usr/bin/bash", "")).is_none());
-    }
-}
+mod tests;

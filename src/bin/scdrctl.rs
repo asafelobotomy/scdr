@@ -49,16 +49,63 @@ enum Command {
     },
     /// Ask the daemon to reload its configuration (root only).
     Reload,
+    /// Measure wake-up latency of an interactive thread under full CPU load,
+    /// with and without scdr's levers (slice, nice). Run with scdrd stopped.
+    Bench {
+        /// Seconds per scenario.
+        #[arg(long, default_value_t = 5)]
+        duration: u64,
+        /// Probe sleep interval in microseconds.
+        #[arg(long, default_value_t = 1000)]
+        interval_us: u64,
+        /// Busy threads (default: twice the CPU count).
+        #[arg(long)]
+        load: Option<usize>,
+        /// Rounds; scenarios are interleaved and each metric's median shown.
+        #[arg(long, default_value_t = 1)]
+        repeat: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Convert ananicy-cpp or system76-scheduler rules into an scdr rules.d file.
+    Import {
+        #[command(subcommand)]
+        from: ImportFrom,
+        /// Write here instead of stdout (e.g. /etc/scdr/rules.d/50-ananicy.toml).
+        #[arg(short, long, global = true)]
+        output: Option<PathBuf>,
+        #[command(flatten)]
+        paths: PathArgs,
+    },
     /// Run the per-user session agent (scdr-session.service): reports the
     /// focused window, GameMode games and PipeWire audio streams to scdrd.
     Agent,
 }
 
+#[derive(Subcommand)]
+enum ImportFrom {
+    /// A directory of ananicy .types/.rules files (e.g. /etc/ananicy.d).
+    Ananicy {
+        dir: PathBuf,
+        /// Only these ananicy types, e.g. `--only Game` for the game list.
+        #[arg(long, value_delimiter = ',')]
+        only: Vec<String>,
+        /// Also import names your current scdr rules already match.
+        #[arg(long)]
+        keep_overlaps: bool,
+    },
+    /// system76-scheduler .kdl files (config.kdl, process-scheduler/*.kdl).
+    System76 {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
+}
+
 #[derive(Args)]
 struct PathArgs {
-    #[arg(long, default_value = scdr::config::ETC_DIR)]
+    #[arg(long, global = true, default_value = scdr::config::ETC_DIR)]
     etc_dir: PathBuf,
-    #[arg(long, default_value = scdr::config::SHARE_DIR)]
+    #[arg(long, global = true, default_value = scdr::config::SHARE_DIR)]
     share_dir: PathBuf,
 }
 
@@ -145,6 +192,38 @@ async fn main() -> anyhow::Result<()> {
                 println!("  {}", f.display());
             }
         }
+        Command::Import { from, output, paths } => import(from, output, &paths)?,
+        Command::Bench { duration, interval_us, load, repeat, json } => {
+            let cpus = std::thread::available_parallelism().map_or(4, |n| n.get());
+            let opt = scdr::bench::Options {
+                duration: std::time::Duration::from_secs(duration),
+                interval: std::time::Duration::from_micros(interval_us),
+                load_threads: load.unwrap_or(cpus * 2),
+            };
+            let scenarios = scdr::bench::default_scenarios();
+            let repeat = repeat.max(1);
+            if !json {
+                eprintln!(
+                    "{} busy threads on {cpus} CPUs, {duration}s per scenario, {repeat} round(s)",
+                    opt.load_threads
+                );
+            }
+            let mut runs: Vec<Vec<scdr::bench::Result>> = vec![Vec::new(); scenarios.len()];
+            for round in 1..=repeat {
+                for (i, s) in scenarios.iter().enumerate() {
+                    if !json {
+                        eprintln!("  round {round}/{repeat}: {}", s.name);
+                    }
+                    runs[i].push(scdr::bench::run(s, &opt));
+                }
+            }
+            let results: Vec<_> = runs.iter().map(|r| scdr::bench::median(r)).collect();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&results)?);
+            } else {
+                scdr::bench::print_table(&results);
+            }
+        }
         Command::Agent => {
             tracing_subscriber::fmt()
                 .with_env_filter(
@@ -179,6 +258,49 @@ fn resolve(target: &str) -> anyhow::Result<Vec<u32>> {
         bail!("no process named {target:?}");
     }
     Ok(pids)
+}
+
+fn import(from: ImportFrom, output: Option<PathBuf>, paths: &PathArgs) -> anyhow::Result<()> {
+    // Imported rules go first, so by default skip names our rules already cover.
+    let current = paths.load().ok();
+    let imp = match from {
+        ImportFrom::Ananicy { dir, only, keep_overlaps } => {
+            let covered = |name: &str| {
+                !keep_overlaps
+                    && current
+                        .as_ref()
+                        .is_some_and(|c| c.rules.find(&scdr::import::synthetic(name)).is_some())
+            };
+            scdr::import::ananicy::import(&dir, &only, &covered)?
+        }
+        ImportFrom::System76 { files } => scdr::import::system76::import(&files)?,
+    };
+    let files = current.map(|c| c.files).unwrap_or_default();
+    imp.validate(&files)
+        .map_err(|e| anyhow::anyhow!("the converted rules don't load: {e}"))?;
+
+    let toml = imp.to_toml();
+    match &output {
+        Some(path) => std::fs::write(path, &toml).with_context(|| format!("writing {}", path.display()))?,
+        None => print!("{toml}"),
+    }
+    eprintln!(
+        "imported {} profiles, {} rules ({} patterns){}",
+        imp.profile_count(),
+        imp.rule_count(),
+        imp.pattern_count(),
+        output.map(|p| format!(" into {}", p.display())).unwrap_or_default()
+    );
+    if !imp.skipped.is_empty() {
+        eprintln!("not imported ({}):", imp.skipped.len());
+        for s in imp.skipped.iter().take(12) {
+            eprintln!("  {s}");
+        }
+        if imp.skipped.len() > 12 {
+            eprintln!("  … and {} more", imp.skipped.len() - 12);
+        }
+    }
+    Ok(())
 }
 
 fn list(config: &Config, all: bool) {

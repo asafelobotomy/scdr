@@ -3,14 +3,17 @@
 //! scdrd runs as root on the system bus and can't see a desktop session, so
 //! this agent runs as the user (scdr-session.service) and relays:
 //!
-//! - the focused window's pid, reported by a KWin script it loads,
+//! - the focused window's pid: from a KWin script it loads, Hyprland's or
+//!   niri's IPC, or the scdr GNOME Shell extension,
 //! - processes registered with GameMode,
 //! - processes with a running PipeWire audio stream.
 //!
 //! It re-sends everything whenever scdrd (re)appears on the system bus.
 
 mod gamemode;
+mod hyprland;
 mod kwin;
+mod niri;
 mod pipewire;
 
 use crate::dbus::Daemon1Proxy;
@@ -76,10 +79,7 @@ pub async fn run() -> anyhow::Result<()> {
         .await?;
     let system = zbus::Connection::system().await?;
 
-    match kwin::load(&session).await {
-        Ok(()) => tracing::info!("KWin foreground script loaded"),
-        Err(e) => tracing::warn!("no foreground tracking: {e:#}"),
-    }
+    let kwin_loaded = start_foreground(&session, &shared).await;
     tokio::spawn({
         let (session, shared) = (session.clone(), shared.clone());
         async move {
@@ -111,8 +111,49 @@ pub async fn run() -> anyhow::Result<()> {
             _ = int.recv() => break,
         }
     }
-    kwin::unload(&session).await;
+    if kwin_loaded {
+        kwin::unload(&session).await;
+    }
     Ok(())
+}
+
+pub const GNOME_EXTENSION: &str = "scdr-foreground@scdr";
+
+/// Picks how to learn the focused window for this desktop. Returns whether
+/// a KWin script was loaded (to unload on exit).
+async fn start_foreground(session: &zbus::Connection, shared: &Shared) -> bool {
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+    let spawn = |name: &'static str, fut: std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>>| {
+        tracing::info!("following focus through {name}");
+        tokio::spawn(async move {
+            if let Err(e) = fut.await {
+                tracing::warn!("{name} focus tracking stopped: {e:#}");
+            }
+        });
+    };
+    if hyprland::available() {
+        spawn("Hyprland IPC", Box::pin(hyprland::watch(shared.clone())));
+        false
+    } else if niri::available() {
+        spawn("niri IPC", Box::pin(niri::watch(shared.clone())));
+        false
+    } else if desktop.split(':').any(|d| d == "GNOME") {
+        tracing::info!(
+            "GNOME: focus comes from the Shell extension; enable it with `gnome-extensions enable {GNOME_EXTENSION}`"
+        );
+        false
+    } else {
+        match kwin::load(session).await {
+            Ok(()) => {
+                tracing::info!("following focus through a KWin script");
+                true
+            }
+            Err(e) => {
+                tracing::warn!("no foreground tracking on {desktop:?}: {e:#}");
+                false
+            }
+        }
+    }
 }
 
 /// Sends what changed since `sent` (everything with `all`).
