@@ -5,6 +5,7 @@ pub mod apply;
 pub mod config;
 pub mod dbus;
 pub mod explain;
+pub mod policy;
 pub mod procfs;
 pub mod rules;
 pub mod sched;

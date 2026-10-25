@@ -168,3 +168,48 @@ fn roles_layer_and_follow_power_profile() {
     let e = cfg(&[("x.toml", "[roles]\ngame = \"nope\"\n")]).unwrap_err();
     assert!(e.to_string().contains("unknown profile"), "{e}");
 }
+
+#[test]
+fn scheduler_policy_and_pressure() {
+    use super::policy::SchedChoice;
+    let c = cfg(&[(
+        "p.toml",
+        r#"
+        [sched_ext]
+        enable = true
+        default = "eevdf"
+        gaming = "lavd:gaming"
+        [sched_ext.power]
+        power-saver = "scx_lavd:powersave"
+        performance = "bpfland"
+        [eevdf]
+        preempt = "full"
+        [eevdf.power.power-saver]
+        preempt = "lazy"
+        base_slice_us = 4000
+        [pressure]
+        high = 30.0
+        "#,
+    )])
+    .unwrap();
+    let ext = |name: &str, mode| SchedChoice::Ext { name: name.into(), mode };
+    let s = &c.sched_ext;
+    assert_eq!(s.choose(Some("balanced"), false), SchedChoice::Eevdf);
+    assert_eq!(s.choose(Some("performance"), false), ext("scx_bpfland", 0));
+    assert_eq!(s.choose(Some("power-saver"), true), ext("scx_lavd", 1), "gaming wins");
+    assert_eq!(s.choose(Some("power-saver"), false), ext("scx_lavd", 2));
+    assert_eq!(ext("scx_lavd", 2).to_string(), "scx_lavd:powersave");
+
+    let ps = c.eevdf.for_power(Some("power-saver"));
+    assert_eq!((ps.preempt.as_deref(), ps.base_slice_us), (Some("lazy"), Some(4000)));
+    assert_eq!(c.eevdf.for_power(None).preempt.as_deref(), Some("full"));
+    assert_eq!((c.pressure.high, c.pressure.low), (30.0, 5.0));
+
+    for bad in [
+        "[sched_ext]\ndefault = \"lavd:turbo\"\n",
+        "[eevdf]\npreempt = \"always\"\n",
+        "[pressure]\nhigh = 4.0\n",
+    ] {
+        assert!(cfg(&[("b.toml", bad)]).is_err(), "{bad}");
+    }
+}

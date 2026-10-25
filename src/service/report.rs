@@ -119,6 +119,9 @@ impl Service {
             power_profile: self.power_profile().map(str::to_owned),
             roles: self.config.roles.for_power(self.power_profile()),
             sessions: self.sessions_report(),
+            cpu_pressure: self.cpu_pressure().0,
+            pressure_active: self.cpu_pressure().1,
+            policy: self.policy_report.clone(),
         }
     }
 }

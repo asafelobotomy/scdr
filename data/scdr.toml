@@ -37,10 +37,12 @@ launchers = [
 # Roles: profiles for what a process is doing right now, reported by the
 # per-user session agent (`systemctl --user enable --now scdr-session`).
 # They only apply to processes no rule matches. Precedence: game, audio,
-# foreground.
+# foreground, background.
 #   foreground  processes in the focused window's app (its app.slice unit)
 #   audio       processes with a running PipeWire audio stream
 #   game        processes registered with GameMode
+#   background  processes in apps that aren't focused, only while CPU
+#               pressure is above [pressure] high (until it drops below low)
 # [roles.power.<power-profiles-daemon profile>] overrides them; "" = off.
 # ---------------------------------------------------------------------------
 
@@ -48,9 +50,44 @@ launchers = [
 foreground = "foreground"
 audio = "audio-client"
 game = "game"
+background = "background"
 
 [roles.power.power-saver]
 foreground = ""
+
+# CPU pressure (PSI "some" avg10: % of time tasks waited for a CPU) that
+# turns the background role on, and off again.
+[pressure]
+high = 20.0
+low = 5.0
+
+# ---------------------------------------------------------------------------
+# Scheduler policy. Both are off unless configured; both are restored when
+# scdrd stops.
+#
+# sched_ext: run a BPF scheduler through scx_loader (install scx-scheds and
+# scx-tools). Values: "eevdf" (none) or "scheduler[:mode]", mode one of auto,
+# gaming, powersave, lowlatency, server. Picked in this order: gaming (while a
+# GameMode game runs), the power-profiles-daemon profile, default. A scheduler
+# you switch to by hand (scxctl) is left running until scdr's choice changes.
+#
+# [sched_ext]
+# enable = true
+# default = "eevdf"
+# gaming = "lavd:gaming"
+# [sched_ext.power]
+# performance = "bpfland"
+# power-saver = "lavd:powersave"
+#
+# eevdf: the kernel's own scheduler knobs, used while no sched_ext scheduler
+# runs. preempt: none, voluntary, full, lazy. base_slice_us: 100..100000.
+#
+# [eevdf]
+# preempt = "full"
+# [eevdf.power.power-saver]
+# preempt = "lazy"
+# base_slice_us = 4000
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Profiles. Fields (all optional; unset fields are left as they are):
@@ -107,6 +144,10 @@ cpu_weight = 300
 [profile.audio-client]
 nice = -4
 slice_us = 1000
+
+[profile.background]
+nice = 5
+cpu_weight = 50
 
 [profile.session-services]
 nice = 5

@@ -5,7 +5,8 @@ use clap::Parser;
 use scdr::config::{Config, Paths};
 use scdr::dbus::{BUS_NAME, Daemon, OBJECT_PATH, PowerProfilesProxy};
 use futures_util::{Stream, StreamExt};
-use scdr::service::Service;
+use scdr::policy::Policy;
+use scdr::service::{Service, cpu_some_avg10};
 use scdr::watcher;
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -125,6 +126,10 @@ async fn main() -> anyhow::Result<()> {
     // Exec re-checks all use the same delay, so a FIFO queue stays ordered.
     let mut rechecks: VecDeque<(Instant, u32, u64)> = VecDeque::new();
 
+    // Pressure sampling and scheduler policy run on a short tick.
+    let mut policy = Policy::default();
+    let mut tick = tokio::time::interval(Duration::from_secs(2));
+
     let mut hup = signal(SignalKind::hangup())?;
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
@@ -164,8 +169,10 @@ async fn main() -> anyhow::Result<()> {
             Some(change) = next_item(&mut ppd_changes) => {
                 if let Ok(profile) = change.get().await {
                     service.lock().unwrap().set_power_profile(Some(profile));
+                    policy_step(&mut policy, bus.as_ref(), &service).await;
                 }
             }
+            _ = tick.tick() => policy_step(&mut policy, bus.as_ref(), &service).await,
             _ = hup.recv() => {
                 match Config::load(&paths) {
                     Ok(config) => {
@@ -181,8 +188,23 @@ async fn main() -> anyhow::Result<()> {
     }
 
     tracing::info!("shutting down");
+    policy.restore(bus.as_ref()).await;
     service.lock().unwrap().shutdown();
     Ok(())
+}
+
+/// Samples CPU pressure, then brings the scheduler and EEVDF knobs in line.
+async fn policy_step(policy: &mut Policy, bus: Option<&zbus::Connection>, service: &Arc<Mutex<Service>>) {
+    let (sched_ext, eevdf, power, gaming) = {
+        let mut svc = service.lock().unwrap();
+        if let Some(avg10) = cpu_some_avg10() {
+            svc.set_cpu_pressure(avg10);
+        }
+        let power = svc.power_profile().map(str::to_owned);
+        (svc.config.sched_ext.clone(), svc.config.eevdf.clone(), power, svc.gaming())
+    };
+    let report = policy.sync(bus, &sched_ext, &eevdf, power.as_deref(), gaming).await;
+    service.lock().unwrap().policy_report = report;
 }
 
 async fn power_profiles(

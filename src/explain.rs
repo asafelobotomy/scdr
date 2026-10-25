@@ -61,6 +61,9 @@ pub struct Status {
     pub power_profile: Option<String>,
     pub roles: RoleSet,
     pub sessions: Vec<SessionReport>,
+    pub cpu_pressure: Option<f64>,
+    pub pressure_active: bool,
+    pub policy: Vec<String>,
 }
 
 /// What the config says about `pid`, computed without daemon state.
@@ -298,12 +301,22 @@ impl fmt::Display for Status {
         let off = |r: &Option<String>| r.clone().unwrap_or_else(|| "off".into());
         writeln!(
             f,
-            "power     {} → roles: foreground={} audio={} game={}",
+            "power     {} → roles: foreground={} audio={} game={} background={}",
             self.power_profile.as_deref().unwrap_or("unknown"),
             off(&self.roles.foreground),
             off(&self.roles.audio),
-            off(&self.roles.game)
+            off(&self.roles.game),
+            off(&self.roles.background)
         )?;
+        writeln!(
+            f,
+            "pressure  cpu {} → background role {}",
+            self.cpu_pressure.map_or("?".into(), |p| format!("{p:.1}%")),
+            if self.pressure_active { "on" } else { "off" }
+        )?;
+        for line in &self.policy {
+            writeln!(f, "scheduler {line}")?;
+        }
         if self.sessions.is_empty() {
             writeln!(f, "sessions  no session agent connected (scdr-session.service)")?;
         }

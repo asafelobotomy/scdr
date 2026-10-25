@@ -2,9 +2,11 @@
 
 mod knobs;
 mod lineage;
+mod pressure;
 mod report;
 mod roles;
 
+pub use pressure::cpu_some_avg10;
 pub use roles::SessionReport;
 mod units;
 
@@ -106,6 +108,10 @@ pub struct Service {
     uclamp_active: bool,
     sessions: roles::Sessions,
     power_profile: Option<String>,
+    cpu_pressure: Option<f64>,
+    pressure_active: bool,
+    /// Scheduler policy status lines, from the main loop.
+    pub policy_report: Vec<String>,
     started: Instant,
     self_pid: u32,
 }
@@ -123,6 +129,9 @@ impl Service {
             uclamp_active: false,
             sessions: Default::default(),
             power_profile: None,
+            cpu_pressure: None,
+            pressure_active: false,
+            policy_report: Vec::new(),
             started: Instant::now(),
             self_pid: std::process::id(),
         }

@@ -12,7 +12,8 @@ url="https://github.com/your-name/scdr"
 license=('MPL-2.0')
 depends=('gcc-libs' 'glibc' 'dbus')
 makedepends=('cargo')
-optdepends=('scx-scheds: sched_ext schedulers (used from milestone 4)'
+optdepends=('scx-scheds: sched_ext schedulers ([sched_ext])'
+            'scx-tools: scx_loader, which scdr drives ([sched_ext])'
             'pipewire: audio-client role (pw-dump)'
             'gamemode: game role'
             'power-profiles-daemon: per-power-profile roles')

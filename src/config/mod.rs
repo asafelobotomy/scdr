@@ -10,11 +10,13 @@
 //! Higher-precedence files override `[system]` keys and whole profiles of the
 //! same name, add to `[exceptions]`, and have their rules tried first.
 
+pub(crate) mod policy;
 mod profile;
 mod roles;
 
 use crate::rules::{Exceptions, RuleSet};
 pub use profile::{NamedProfile, Profile};
+pub use policy::{Eevdf, EevdfConfig, Pressure, SchedChoice, SchedExt};
 pub use roles::{Role, RoleSet, Roles};
 use profile::{RawProfile, resolve_profile};
 use serde::{Deserialize, Serialize};
@@ -79,6 +81,9 @@ pub struct Config {
     pub rules: RuleSet,
     pub exceptions: Exceptions,
     pub roles: Roles,
+    pub sched_ext: SchedExt,
+    pub eevdf: EevdfConfig,
+    pub pressure: Pressure,
     /// Files that were loaded, lowest precedence first.
     pub files: Vec<PathBuf>,
 }
@@ -141,6 +146,9 @@ struct RawFile {
     rule: Vec<RawRule>,
     exceptions: Option<RawExceptions>,
     roles: Option<roles::RawRoles>,
+    sched_ext: Option<policy::RawSchedExt>,
+    eevdf: Option<policy::RawEevdf>,
+    pressure: Option<policy::RawPressure>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -216,6 +224,9 @@ impl Config {
         let mut rule_chunks: Vec<(PathBuf, Vec<RawRule>)> = Vec::new();
         let mut exceptions = RawExceptions::default();
         let mut raw_roles = Vec::new();
+        let mut sched_ext = SchedExt::default();
+        let mut eevdf = EevdfConfig::default();
+        let mut pressure = Pressure::default();
         let mut files = Vec::new();
 
         for (path, text) in sources {
@@ -237,6 +248,15 @@ impl Config {
             }
             if let Some(r) = raw.roles {
                 raw_roles.push((path.clone(), r));
+            }
+            if let Some(s) = raw.sched_ext {
+                policy::merge_sched_ext(&mut sched_ext, &path, s)?;
+            }
+            if let Some(e) = raw.eevdf {
+                policy::merge_eevdf(&mut eevdf, &path, e)?;
+            }
+            if let Some(p) = raw.pressure {
+                policy::merge_pressure(&mut pressure, &path, p)?;
             }
             rule_chunks.push((path.clone(), raw.rule));
             files.push(path);
@@ -263,6 +283,9 @@ impl Config {
             rules,
             exceptions,
             roles,
+            sched_ext,
+            eevdf,
+            pressure,
             files,
         })
     }

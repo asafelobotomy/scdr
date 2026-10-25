@@ -106,6 +106,11 @@ impl Service {
         }
     }
 
+    /// Whether any session has a GameMode game running.
+    pub fn gaming(&self) -> bool {
+        self.sessions.values().any(|s| !s.games.is_empty())
+    }
+
     pub fn power_profile(&self) -> Option<&str> {
         self.power_profile.as_deref()
     }
@@ -114,13 +119,20 @@ impl Service {
     pub(super) fn role_match(&self, info: &ProcInfo) -> Option<(RuleRef, NamedProfile)> {
         let session = self.sessions.get(&info.uid)?;
         let roles = self.config.roles.for_power(self.power_profile.as_deref());
+        let focused = session.foreground.as_ref().is_some_and(|(cg, _)| {
+            info.cgroup == *cg || info.cgroup.starts_with(&format!("{cg}/"))
+        });
         let active = |role: Role| -> bool {
             match role {
                 Role::Game => session.games.contains(&info.pid),
                 Role::Audio => session.audio.contains(&info.pid),
-                Role::Foreground => session.foreground.as_ref().is_some_and(|(cg, _)| {
-                    info.cgroup == *cg || info.cgroup.starts_with(&format!("{cg}/"))
-                }),
+                Role::Foreground => focused,
+                // Never the focused app, even with the foreground role off.
+                Role::Background => {
+                    self.pressure_active
+                        && !focused
+                        && info.cgroup.starts_with(&app_slice(info.uid))
+                }
             }
         };
         let role = Role::ALL.into_iter().find(|r| roles.get(*r).is_some() && active(*r))?;
@@ -168,13 +180,18 @@ impl Service {
         pids
     }
 
-    fn reevaluate(&mut self, mut pids: Vec<u32>) {
+    pub(super) fn reevaluate(&mut self, mut pids: Vec<u32>) {
         pids.sort_unstable();
         pids.dedup();
         for pid in pids {
             self.evaluate(pid, Trigger::Role);
         }
     }
+}
+
+/// A user's `app.slice`, where desktop apps run.
+pub(super) fn app_slice(uid: u32) -> String {
+    format!("/user.slice/user-{uid}.slice/user@{uid}.service/app.slice/")
 }
 
 fn owned_process(uid: u32, pid: u32) -> Result<ProcInfo, String> {
@@ -193,7 +210,7 @@ fn owned_pids(uid: u32, pids: Vec<u32>) -> BTreeSet<u32> {
 }
 
 /// Every process in a cgroup and its children.
-fn cgroup_pids(cgroup: &str) -> Vec<u32> {
+pub(super) fn cgroup_pids(cgroup: &str) -> Vec<u32> {
     let mut out = Vec::new();
     let root = format!("/sys/fs/cgroup{cgroup}");
     let mut stack = vec![std::path::PathBuf::from(root)];

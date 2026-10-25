@@ -6,9 +6,9 @@ sched_ext kernels (6.12+). It's a modern successor to
 ananicy-cpp, GameMode and scx-loader. See [DESIGN.md](DESIGN.md) for the
 reasoning and the roadmap.
 
-**Status: milestone 3 (context).** Rule-based per-process priorities, systemd
-unit weights, and live roles for the focused app, audio and games. Not yet
-included: sched_ext switching.
+**Status: milestone 4 (system policy).** Rule-based per-process priorities,
+systemd unit weights, live roles for the focused app, audio and games,
+pressure-driven background demotion, and sched_ext / EEVDF policy.
 
 ## What it does
 
@@ -47,6 +47,14 @@ included: sched_ext switching.
   reports these; scdrd only accepts pids owned by the calling user. Roles can
   differ per power-profiles-daemon profile, e.g. no foreground boost on
   power-saver.
+- Under CPU pressure (PSI above `[pressure] high`), apps that aren't focused
+  get the `background` role (`CPUWeight=50`) until pressure drops below
+  `low`. Without a session agent nothing is demoted, since scdr can't tell
+  which app is focused.
+- Optional scheduler policy: `[sched_ext]` picks a sched_ext scheduler
+  through scx_loader (gaming, then power profile, then default) and backs
+  off if you switch by hand; `[eevdf]` sets the kernel's base slice and
+  preemption mode, per power profile, while no sched_ext scheduler runs.
 - Restores everything on `systemctl stop scdrd`: threads, unit weights,
   autogroup and iocost. systemd keeps an empty runtime drop-in
   (`CPUWeight=`) for each unit it touched under `/run`; it has no effect and is

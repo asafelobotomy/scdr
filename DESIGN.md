@@ -129,8 +129,9 @@ bring in the CachyOS game list (about 13.5k entries) without curating it by hand
 3. **Context** (done). Session agent (`scdrctl agent`) with a runtime-loaded KWin
    script, GameMode signals and `pw-dump` audio streams; `[roles]` with
    per-power-profile overrides from power-profiles-daemon.
-4. **System policy.** scx-loader integration, EEVDF fallback tuning, PSI-driven
-   background demotion.
+4. **System policy** (done). scx_loader integration with hand-override back-off,
+   EEVDF base slice / preempt per power profile, PSI-driven background role
+   (sampled every 2 s, with hysteresis).
 5. **Ecosystem.** ananicy and system76 importers, GNOME/Hyprland/niri agents, AUR
    release, a benchmark harness (input latency with `cyclictest`/`schbench`, frame times
    during a `makepkg`).

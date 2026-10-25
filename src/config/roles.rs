@@ -17,23 +17,25 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
-/// Highest precedence first.
+/// Highest precedence first. `Background` only applies under CPU pressure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Game,
     Audio,
     Foreground,
+    Background,
 }
 
 impl Role {
-    pub const ALL: [Role; 3] = [Role::Game, Role::Audio, Role::Foreground];
+    pub const ALL: [Role; 4] = [Role::Game, Role::Audio, Role::Foreground, Role::Background];
 
     pub fn describe(self) -> &'static str {
         match self {
             Role::Game => "registered with GameMode",
             Role::Audio => "playing or recording audio",
             Role::Foreground => "in the focused window's app",
+            Role::Background => "in an app that isn't focused, while the CPU is under pressure",
         }
     }
 }
@@ -44,6 +46,7 @@ impl fmt::Display for Role {
             Role::Game => "game",
             Role::Audio => "audio",
             Role::Foreground => "foreground",
+            Role::Background => "background",
         })
     }
 }
@@ -54,6 +57,7 @@ pub struct RoleSet {
     pub foreground: Option<String>,
     pub audio: Option<String>,
     pub game: Option<String>,
+    pub background: Option<String>,
 }
 
 impl RoleSet {
@@ -62,6 +66,7 @@ impl RoleSet {
             Role::Game => self.game.as_deref(),
             Role::Audio => self.audio.as_deref(),
             Role::Foreground => self.foreground.as_deref(),
+            Role::Background => self.background.as_deref(),
         }
     }
 }
@@ -85,6 +90,7 @@ impl Roles {
             pick(&mut set.foreground, &over.foreground);
             pick(&mut set.audio, &over.audio);
             pick(&mut set.game, &over.game);
+            pick(&mut set.background, &over.background);
         }
         set
     }
@@ -96,6 +102,7 @@ pub(super) struct RawRoleSet {
     foreground: Option<String>,
     audio: Option<String>,
     game: Option<String>,
+    background: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -104,6 +111,7 @@ pub(super) struct RawRoles {
     foreground: Option<String>,
     audio: Option<String>,
     game: Option<String>,
+    background: Option<String>,
     #[serde(default)]
     power: BTreeMap<String, RawRoleSet>,
 }
@@ -120,6 +128,7 @@ pub(super) fn resolve(
             foreground: layer.foreground,
             audio: layer.audio,
             game: layer.game,
+            background: layer.background,
         };
         let check = |v: &Option<String>| -> Result<(), ConfigError> {
             match v.as_deref() {
@@ -133,6 +142,7 @@ pub(super) fn resolve(
             check(&s.foreground)?;
             check(&s.audio)?;
             check(&s.game)?;
+            check(&s.background)?;
         }
         overlay(&mut raw_base, set);
         for (name, set) in layer.power {
@@ -145,6 +155,7 @@ pub(super) fn resolve(
             foreground: nonempty(raw_base.foreground),
             audio: nonempty(raw_base.audio),
             game: nonempty(raw_base.game),
+            background: nonempty(raw_base.background),
         },
         power,
     })
@@ -159,5 +170,8 @@ fn overlay(into: &mut RawRoleSet, from: RawRoleSet) {
     }
     if from.game.is_some() {
         into.game = from.game;
+    }
+    if from.background.is_some() {
+        into.background = from.background;
     }
 }
