@@ -11,9 +11,11 @@
 //! same name, add to `[exceptions]`, and have their rules tried first.
 
 mod profile;
+mod roles;
 
 use crate::rules::{Exceptions, RuleSet};
 pub use profile::{NamedProfile, Profile};
+pub use roles::{Role, RoleSet, Roles};
 use profile::{RawProfile, resolve_profile};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -76,6 +78,7 @@ pub struct Config {
     pub profiles: BTreeMap<String, NamedProfile>,
     pub rules: RuleSet,
     pub exceptions: Exceptions,
+    pub roles: Roles,
     /// Files that were loaded, lowest precedence first.
     pub files: Vec<PathBuf>,
 }
@@ -137,6 +140,7 @@ struct RawFile {
     #[serde(default)]
     rule: Vec<RawRule>,
     exceptions: Option<RawExceptions>,
+    roles: Option<roles::RawRoles>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -211,6 +215,7 @@ impl Config {
         let mut raw_profiles: HashMap<String, (PathBuf, RawProfile)> = HashMap::new();
         let mut rule_chunks: Vec<(PathBuf, Vec<RawRule>)> = Vec::new();
         let mut exceptions = RawExceptions::default();
+        let mut raw_roles = Vec::new();
         let mut files = Vec::new();
 
         for (path, text) in sources {
@@ -230,6 +235,9 @@ impl Config {
                 exceptions.name.extend(ex.name);
                 exceptions.launchers.extend(ex.launchers);
             }
+            if let Some(r) = raw.roles {
+                raw_roles.push((path.clone(), r));
+            }
             rule_chunks.push((path.clone(), raw.rule));
             files.push(path);
         }
@@ -244,12 +252,17 @@ impl Config {
         let rules = RuleSet::compile(rule_chunks, &profiles)?;
         let exceptions = Exceptions::compile(&exceptions)
             .map_err(|e| ConfigError::invalid(Path::new("[exceptions]"), e))?;
+        let roles = roles::resolve(
+            raw_roles.iter_mut().map(|(p, r)| (p.as_path(), std::mem::take(r))).collect(),
+            &profiles,
+        )?;
 
         Ok(Config {
             system,
             profiles,
             rules,
             exceptions,
+            roles,
             files,
         })
     }

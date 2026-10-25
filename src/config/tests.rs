@@ -138,3 +138,33 @@ fn m2_fields_validate_and_inherit() {
     let c = cfg(&[("s.toml", "[system]\niocost = true\n")]).unwrap();
     assert!(c.system.iocost);
 }
+
+#[test]
+fn roles_layer_and_follow_power_profile() {
+    let c = cfg(&[
+        (
+            "share.toml",
+            r#"
+            [profile.fg]
+            nice = -2
+            [profile.au]
+            nice = -4
+            [roles]
+            foreground = "fg"
+            audio = "au"
+            [roles.power.power-saver]
+            foreground = ""
+            "#,
+        ),
+        ("etc.toml", "[roles]\naudio = \"\"\n"),
+    ])
+    .unwrap();
+    let on_ac = c.roles.for_power(Some("performance"));
+    assert_eq!(on_ac.get(Role::Foreground), Some("fg"));
+    assert_eq!(on_ac.get(Role::Audio), None, "etc.toml turned audio off");
+    assert_eq!(c.roles.for_power(Some("power-saver")).get(Role::Foreground), None);
+    assert_eq!(c.roles.for_power(None).get(Role::Game), None);
+
+    let e = cfg(&[("x.toml", "[roles]\ngame = \"nope\"\n")]).unwrap_err();
+    assert!(e.to_string().contains("unknown profile"), "{e}");
+}

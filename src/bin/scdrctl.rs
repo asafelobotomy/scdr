@@ -49,6 +49,9 @@ enum Command {
     },
     /// Ask the daemon to reload its configuration (root only).
     Reload,
+    /// Run the per-user session agent (scdr-session.service): reports the
+    /// focused window, GameMode games and PipeWire audio streams to scdrd.
+    Agent,
 }
 
 #[derive(Args)]
@@ -141,6 +144,19 @@ async fn main() -> anyhow::Result<()> {
             for f in &c.files {
                 println!("  {}", f.display());
             }
+        }
+        Command::Agent => {
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| "info".into()),
+                )
+                .with_writer(std::io::stderr)
+                .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+                .without_time()
+                .with_target(false)
+                .init();
+            scdr::agent::run().await?;
         }
         Command::Reload => {
             let summary = daemon().await?.reload().await.map_err(not_running)?;

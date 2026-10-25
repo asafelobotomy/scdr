@@ -3,6 +3,9 @@
 mod knobs;
 mod lineage;
 mod report;
+mod roles;
+
+pub use roles::SessionReport;
 mod units;
 
 use lineage::hand_tuned;
@@ -28,6 +31,8 @@ pub enum Trigger {
     Recheck,
     /// comm changed (prctl PR_SET_NAME).
     Comm,
+    /// A session role (foreground, audio, game) or power profile changed.
+    Role,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +104,8 @@ pub struct Service {
     iocost_enabled: Vec<String>,
     /// Whether uclamp settings can take effect (schedutil in use).
     uclamp_active: bool,
+    sessions: roles::Sessions,
+    power_profile: Option<String>,
     started: Instant,
     self_pid: u32,
 }
@@ -114,6 +121,8 @@ impl Service {
             autogroup_original: None,
             iocost_enabled: Vec::new(),
             uclamp_active: false,
+            sessions: Default::default(),
+            power_profile: None,
             started: Instant::now(),
             self_pid: std::process::id(),
         }
@@ -253,17 +262,23 @@ impl Service {
                 .map(|n| format!("{n:?} is in [exceptions]"))
         };
 
+        // An explicit rule wins; roles only cover processes no rule matches.
         let matched = match excepted {
             Some(_) => None,
-            None => self.config.rules.find(&info).map(|r| {
-                let mut p = self.config.profiles[&r.profile].clone();
-                if !self.uclamp_active {
-                    p.profile.uclamp_min = None;
-                    p.profile.uclamp_max = None;
-                }
-                (RuleRef::from_rule(r), p)
-            }),
+            None => self
+                .config
+                .rules
+                .find(&info)
+                .map(|r| (RuleRef::from_rule(r), self.config.profiles[&r.profile].clone()))
+                .or_else(|| self.role_match(&info)),
         };
+        let matched = matched.map(|(rule, mut p)| {
+            if !self.uclamp_active {
+                p.profile.uclamp_min = None;
+                p.profile.uclamp_max = None;
+            }
+            (rule, p)
+        });
 
         let unit_profile = matched.as_ref().map(|(_, p)| p.clone());
         self.transition(pid, &info, trigger, matched, excepted);

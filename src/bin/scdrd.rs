@@ -3,7 +3,8 @@
 use anyhow::Context;
 use clap::Parser;
 use scdr::config::{Config, Paths};
-use scdr::dbus::{BUS_NAME, Daemon, OBJECT_PATH};
+use scdr::dbus::{BUS_NAME, Daemon, OBJECT_PATH, PowerProfilesProxy};
+use futures_util::{Stream, StreamExt};
 use scdr::service::Service;
 use scdr::watcher;
 use std::collections::VecDeque;
@@ -84,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
     let polling = service.watcher == "polling";
 
     let service = Arc::new(Mutex::new(service));
-    let _bus = if args.no_dbus {
+    let bus = if args.no_dbus {
         None
     } else {
         let iface = Daemon {
@@ -98,6 +99,16 @@ async fn main() -> anyhow::Result<()> {
             .await
             .context("claiming org.scdr.Daemon1 on the system bus (is scdrd already running?)")?;
         Some(conn)
+    };
+
+    // Follow power-profiles-daemon when it is running; roles can depend on it.
+    let ppd = match &bus {
+        Some(conn) => power_profiles(conn, &service).await,
+        None => None,
+    };
+    let mut ppd_changes = match &ppd {
+        Some(p) => Some(p.receive_active_profile_changed().await),
+        None => None,
     };
 
     let rescan_every = {
@@ -144,8 +155,16 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             _ = sleep_until(next_rescan.unwrap_or_else(far)), if next_rescan.is_some() => {
+                if let Some(conn) = &bus {
+                    drop_dead_agents(conn, &service).await;
+                }
                 service.lock().unwrap().rescan();
                 next_rescan = rescan_every.map(|d| Instant::now() + d);
+            }
+            Some(change) = next_item(&mut ppd_changes) => {
+                if let Ok(profile) = change.get().await {
+                    service.lock().unwrap().set_power_profile(Some(profile));
+                }
             }
             _ = hup.recv() => {
                 match Config::load(&paths) {
@@ -164,4 +183,48 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("shutting down");
     service.lock().unwrap().shutdown();
     Ok(())
+}
+
+async fn power_profiles(
+    conn: &zbus::Connection,
+    service: &Arc<Mutex<Service>>,
+) -> Option<PowerProfilesProxy<'static>> {
+    let proxy = PowerProfilesProxy::new(conn).await.ok()?;
+    match proxy.active_profile().await {
+        Ok(p) => {
+            service.lock().unwrap().set_power_profile(Some(p));
+            Some(proxy)
+        }
+        Err(e) => {
+            tracing::info!("power-profiles-daemon not available ({e})");
+            None
+        }
+    }
+}
+
+/// Forgets sessions whose agent has left the bus (crashed or logged out).
+async fn drop_dead_agents(conn: &zbus::Connection, service: &Arc<Mutex<Service>>) {
+    let senders = service.lock().unwrap().agent_senders();
+    if senders.is_empty() {
+        return;
+    }
+    let Ok(dbus) = zbus::fdo::DBusProxy::new(conn).await else {
+        return;
+    };
+    for sender in senders {
+        let alive = match zbus::names::BusName::try_from(sender.as_str()) {
+            Ok(name) => dbus.name_has_owner(name).await.unwrap_or(true),
+            Err(_) => false,
+        };
+        if !alive {
+            service.lock().unwrap().drop_agent(&sender);
+        }
+    }
+}
+
+async fn next_item<S: Stream + Unpin>(stream: &mut Option<S>) -> Option<S::Item> {
+    match stream {
+        Some(s) => s.next().await,
+        None => std::future::pending().await,
+    }
 }

@@ -4,7 +4,8 @@
 use crate::apply::Snapshot;
 use crate::config::{Config, Profile};
 use crate::procfs::ProcInfo;
-use crate::service::RuleRef;
+use crate::config::RoleSet;
+use crate::service::{RuleRef, SessionReport};
 use crate::system::{self, Disk, SchedExt};
 use crate::units::{UnitId, Weights};
 use serde::{Deserialize, Serialize};
@@ -57,6 +58,9 @@ pub struct Status {
     pub uclamp_active: bool,
     pub governors: Vec<String>,
     pub disks: Vec<Disk>,
+    pub power_profile: Option<String>,
+    pub roles: RoleSet,
+    pub sessions: Vec<SessionReport>,
 }
 
 /// What the config says about `pid`, computed without daemon state.
@@ -224,8 +228,10 @@ impl fmt::Display for Explain {
             Some(r) => row(f, "state", &format!("{} — {r}", self.state))?,
             None => row(f, "state", &self.state)?,
         }
-        if let Some(r) = &self.rule {
-            row(f, "rule", &format!("{} #{}: {}", r.source, r.index, r.conditions))?;
+        match &self.rule {
+            Some(r) if r.source == "role" => row(f, "role", &r.conditions)?,
+            Some(r) => row(f, "rule", &format!("{} #{}: {}", r.source, r.index, r.conditions))?,
+            None => {}
         }
         if let Some(p) = &self.profile {
             let chain = if self.profile_chain.len() > 1 {
@@ -289,6 +295,28 @@ impl fmt::Display for Status {
             None => writeln!(f, "sched_ext not supported by this kernel")?,
         }
         writeln!(f, "units     {} with weights set by scdr", self.units)?;
+        let off = |r: &Option<String>| r.clone().unwrap_or_else(|| "off".into());
+        writeln!(
+            f,
+            "power     {} → roles: foreground={} audio={} game={}",
+            self.power_profile.as_deref().unwrap_or("unknown"),
+            off(&self.roles.foreground),
+            off(&self.roles.audio),
+            off(&self.roles.game)
+        )?;
+        if self.sessions.is_empty() {
+            writeln!(f, "sessions  no session agent connected (scdr-session.service)")?;
+        }
+        for s in &self.sessions {
+            writeln!(
+                f,
+                "session   uid {}: foreground {}; audio {:?}; games {:?}",
+                s.uid,
+                s.foreground.as_deref().unwrap_or("-"),
+                s.audio,
+                s.games
+            )?;
+        }
         let uclamp = if self.uclamp_active { "applied" } else { "not applied (needs schedutil)" };
         writeln!(f, "uclamp    {uclamp}; governor {}", self.governors.join("/"))?;
         for d in &self.disks {

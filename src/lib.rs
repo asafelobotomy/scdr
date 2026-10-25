@@ -1,5 +1,6 @@
 //! SCDR: a process scheduling and priority daemon for EEVDF and sched_ext kernels.
 
+pub mod agent;
 pub mod apply;
 pub mod config;
 pub mod dbus;

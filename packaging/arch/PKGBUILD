@@ -12,7 +12,10 @@ url="https://github.com/your-name/scdr"
 license=('MPL-2.0')
 depends=('gcc-libs' 'glibc' 'dbus')
 makedepends=('cargo')
-optdepends=('scx-scheds: sched_ext schedulers (used from milestone 4)')
+optdepends=('scx-scheds: sched_ext schedulers (used from milestone 4)'
+            'pipewire: audio-client role (pw-dump)'
+            'gamemode: game role'
+            'power-profiles-daemon: per-power-profile roles')
 
 _root="$(realpath "$startdir/../..")"
 
@@ -43,6 +46,7 @@ package() {
   install -Dm644 data/scdr.toml "$pkgdir/usr/share/scdr/scdr.toml"
   install -dm755 "$pkgdir/usr/share/scdr/rules.d" "$pkgdir/etc/scdr/rules.d"
   install -Dm644 data/scdrd.service "$pkgdir/usr/lib/systemd/system/scdrd.service"
+  install -Dm644 data/scdr-session.service "$pkgdir/usr/lib/systemd/user/scdr-session.service"
   install -Dm644 data/org.scdr.Daemon1.conf "$pkgdir/usr/share/dbus-1/system.d/org.scdr.Daemon1.conf"
   install -Dm644 README.md "$pkgdir/usr/share/doc/scdr/README.md"
 }

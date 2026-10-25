@@ -6,9 +6,9 @@ sched_ext kernels (6.12+). It's a modern successor to
 ananicy-cpp, GameMode and scx-loader. See [DESIGN.md](DESIGN.md) for the
 reasoning and the roadmap.
 
-**Status: milestone 2 (cgroups).** Rule-based per-process priorities plus
-systemd unit weights. Not yet included: foreground boosting, GameMode/PipeWire
-awareness, sched_ext switching.
+**Status: milestone 3 (context).** Rule-based per-process priorities, systemd
+unit weights, and live roles for the focused app, audio and games. Not yet
+included: sched_ext switching.
 
 ## What it does
 
@@ -37,6 +37,16 @@ awareness, sched_ext switching.
   leaves alone threads that rtkit, GameMode, `renice` or `chrt` changed.
 - Leaves launchers (`nice`, `chrt`, `gamemoderun`, …) and anything they start
   alone. It also spots processes started through them after they've exec'd away.
+- Roles give processes no rule matches a profile for what they're doing now:
+  - `foreground`: the focused window's app (its whole `app.slice` unit), from a
+    KWin script loaded for the session only (nothing is written to kwinrc)
+  - `audio`: processes with a *running* PipeWire audio stream
+  - `game`: processes registered with GameMode
+
+  A per-user session agent (`scdrctl agent`, run by `scdr-session.service`)
+  reports these; scdrd only accepts pids owned by the calling user. Roles can
+  differ per power-profiles-daemon profile, e.g. no foreground boost on
+  power-saver.
 - Restores everything on `systemctl stop scdrd`: threads, unit weights,
   autogroup and iocost. systemd keeps an empty runtime drop-in
   (`CPUWeight=`) for each unit it touched under `/run`; it has no effect and is
@@ -53,6 +63,7 @@ awareness, sched_ext switching.
 ```sh
 cd packaging/arch && makepkg -si
 systemctl enable --now scdrd
+systemctl --user enable --now scdr-session   # roles: focus, audio, games
 ```
 
 Or for development:

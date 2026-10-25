@@ -1,0 +1,13 @@
+[Unit]
+Description=SCDR session agent (focused window, GameMode, PipeWire)
+PartOf=graphical-session.target
+After=graphical-session.target plasma-kwin_wayland.service
+
+[Service]
+ExecStart=/usr/bin/scdrctl agent
+Restart=on-failure
+RestartSec=5s
+Slice=session.slice
+
+[Install]
+WantedBy=graphical-session.target

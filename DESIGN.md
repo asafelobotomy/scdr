@@ -126,8 +126,9 @@ bring in the CachyOS game list (about 13.5k entries) without curating it by hand
    (nice, slice, policy, ioprio, oom), `explain`, PKGBUILD and systemd unit.
 2. **cgroups** (done). systemd unit weights; uclamp, gated on schedutil; per-disk
    I/O lever detection with opt-in iocost; autogroup control (done in M1).
-3. **Context.** KWin session agent and foreground boost; GameMode signals; PipeWire;
-   power-profiles-daemon.
+3. **Context** (done). Session agent (`scdrctl agent`) with a runtime-loaded KWin
+   script, GameMode signals and `pw-dump` audio streams; `[roles]` with
+   per-power-profile overrides from power-profiles-daemon.
 4. **System policy.** scx-loader integration, EEVDF fallback tuning, PSI-driven
    background demotion.
 5. **Ecosystem.** ananicy and system76 importers, GNOME/Hyprland/niri agents, AUR

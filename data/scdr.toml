@@ -27,11 +27,30 @@ name = [
     "scdrd", "gamemoded",
 ]
 # Tools that set priorities on purpose. The tool, whatever it execs, and all
-# its descendants are left alone.
+# its descendants are left alone. (gamemoderun isn't here: games GameMode
+# registers get the "game" role instead.)
 launchers = [
-    "chrt", "nice", "ionice", "taskset", "schedtool", "gamemoderun",
-    "game-performance", "systemd-run",
+    "chrt", "nice", "ionice", "taskset", "schedtool", "systemd-run",
 ]
+
+# ---------------------------------------------------------------------------
+# Roles: profiles for what a process is doing right now, reported by the
+# per-user session agent (`systemctl --user enable --now scdr-session`).
+# They only apply to processes no rule matches. Precedence: game, audio,
+# foreground.
+#   foreground  processes in the focused window's app (its app.slice unit)
+#   audio       processes with a running PipeWire audio stream
+#   game        processes registered with GameMode
+# [roles.power.<power-profiles-daemon profile>] overrides them; "" = off.
+# ---------------------------------------------------------------------------
+
+[roles]
+foreground = "foreground"
+audio = "audio-client"
+game = "game"
+
+[roles.power.power-saver]
+foreground = ""
 
 # ---------------------------------------------------------------------------
 # Profiles. Fields (all optional; unset fields are left as they are):
@@ -78,6 +97,16 @@ cpu_weight = 200
 nice = -5
 slice_us = 1500
 io = "be:0"
+
+[profile.foreground]
+nice = -2
+slice_us = 2000
+uclamp_min = 256
+cpu_weight = 300
+
+[profile.audio-client]
+nice = -4
+slice_us = 1000
 
 [profile.session-services]
 nice = 5

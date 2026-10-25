@@ -27,6 +27,14 @@ impl Service {
             State::Unmatched => ex.state = "unmatched".into(),
             State::Managed(m) => {
                 ex.state = if self.dry_run { "managed (dry run)" } else { "managed" }.into();
+                // What the daemon applied, which may be a role the offline view can't see.
+                ex.rule = Some(m.rule.clone());
+                if let Some(p) = self.config.profiles.get(&m.profile) {
+                    ex.profile = Some(p.name.clone());
+                    ex.profile_chain = p.chain.clone();
+                    ex.settings = Some(explain::format_profile(&p.profile));
+                    ex.notes = explain::notes(&p.profile);
+                }
                 ex.original = Some(m.original.to_string());
                 ex.target = Some(m.target.to_string());
                 ex.threads = Some(m.last.to_string());
@@ -108,6 +116,9 @@ impl Service {
             uclamp_active: self.uclamp_active,
             governors: system::cpu_governors(),
             disks: system::disks(),
+            power_profile: self.power_profile().map(str::to_owned),
+            roles: self.config.roles.for_power(self.power_profile()),
+            sessions: self.sessions_report(),
         }
     }
 }
