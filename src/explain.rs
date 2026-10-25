@@ -5,7 +5,8 @@ use crate::apply::Snapshot;
 use crate::config::{Config, Profile};
 use crate::procfs::ProcInfo;
 use crate::service::RuleRef;
-use crate::system::{self, SchedExt};
+use crate::system::{self, Disk, SchedExt};
+use crate::units::{UnitId, Weights};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::{self, Write as _};
@@ -28,6 +29,8 @@ pub struct Explain {
     pub original: Option<String>,
     pub target: Option<String>,
     pub threads: Option<String>,
+    /// The systemd unit and its weights, when a profile sets them.
+    pub unit: Option<String>,
     pub errors: Vec<String>,
     pub notes: Vec<String>,
 }
@@ -49,7 +52,11 @@ pub struct Status {
     pub by_profile: BTreeMap<String, usize>,
     pub autogroup: Option<bool>,
     pub sched_ext: Option<SchedExt>,
-    pub io_schedulers: Vec<(String, String)>,
+    /// systemd units whose weights scdr set.
+    pub units: usize,
+    pub uclamp_active: bool,
+    pub governors: Vec<String>,
+    pub disks: Vec<Disk>,
 }
 
 /// What the config says about `pid`, computed without daemon state.
@@ -107,6 +114,16 @@ pub fn offline(config: &Config, pid: u32) -> Explain {
         ex.target = current.map(|c| c.with_profile(&profile.profile).to_string());
     }
     ex.notes = notes(&profile.profile);
+    if profile.profile.has_unit_weights() {
+        let want = Weights {
+            cpu: profile.profile.cpu_weight,
+            io: profile.profile.io_weight,
+        };
+        ex.unit = Some(match UnitId::from_cgroup(&info.cgroup) {
+            Some(id) => format!("{id}: wants {want}"),
+            None => "not in a systemd unit, so unit weights don't apply".into(),
+        });
+    }
     ex
 }
 
@@ -129,6 +146,21 @@ pub fn notes(p: &Profile) -> Vec<String> {
                 "{name} is active: slice_us is ignored and nice/policy handling depends on it"
             ));
         }
+    }
+    if p.io_weight.is_some() {
+        let ignored = system::io_weight_ignored_on();
+        if !ignored.is_empty() {
+            notes.push(format!(
+                "IOWeight only takes effect under bfq or iocost; ignored on {} (see [system] iocost)",
+                ignored.join(", ")
+            ));
+        }
+    }
+    if p.has_uclamp() && !system::uclamp_effective() {
+        notes.push(format!(
+            "uclamp needs the schedutil governor; this system uses {}, so it is not applied",
+            system::cpu_governors().join("/")
+        ));
     }
     if p.nice.is_some() && system::autogroup() == Some(true) {
         notes.push("autogroup is on: nice only orders tasks within the same session".into());
@@ -155,6 +187,15 @@ pub fn format_profile(p: &Profile) -> String {
     }
     if let Some(v) = p.oom_score_adj {
         put("oom_score_adj", v.to_string());
+    }
+    if p.has_uclamp() {
+        put("uclamp", format!("{}..{}", p.uclamp_min.unwrap_or(0), p.uclamp_max.unwrap_or(1024)));
+    }
+    if let Some(v) = p.cpu_weight {
+        put("cpu_weight", v.to_string());
+    }
+    if let Some(v) = p.io_weight {
+        put("io_weight", v.to_string());
     }
     if s.is_empty() {
         s.push_str("(no settings)");
@@ -199,6 +240,7 @@ impl fmt::Display for Explain {
             ("target", &self.target),
             ("current", &self.current),
             ("threads", &self.threads),
+            ("unit", &self.unit),
         ] {
             if let Some(v) = v {
                 row(f, k, v)?;
@@ -246,7 +288,12 @@ impl fmt::Display for Status {
             Some(s) => writeln!(f, "sched_ext {} (EEVDF in use)", s.state)?,
             None => writeln!(f, "sched_ext not supported by this kernel")?,
         }
-        let io: Vec<String> = self.io_schedulers.iter().map(|(d, s)| format!("{d}={s}")).collect();
-        writeln!(f, "io sched  {}", io.join(" "))
+        writeln!(f, "units     {} with weights set by scdr", self.units)?;
+        let uclamp = if self.uclamp_active { "applied" } else { "not applied (needs schedutil)" };
+        writeln!(f, "uclamp    {uclamp}; governor {}", self.governors.join("/"))?;
+        for d in &self.disks {
+            writeln!(f, "disk      {} [{}{}]: {}", d.name, d.scheduler, if d.iocost { ", iocost" } else { "" }, d.lever())?;
+        }
+        Ok(())
     }
 }

@@ -16,6 +16,9 @@ rescan_secs = 60
 # Re-check a process this long after exec, once systemd has moved it into its
 # final cgroup (milliseconds, 0 = off).
 exec_recheck_ms = 1500
+# Enable the kernel's iocost controller on disks that don't use bfq, so
+# io_weight takes effect there. Off by default; restored on shutdown.
+iocost = false
 
 [exceptions]
 # Never touched.
@@ -39,6 +42,15 @@ launchers = [
 #                  ~3000 µs on 8 CPUs). Ignored while a sched_ext scheduler runs.
 #   io             "idle" | "be:0-7" | "rt:0-7" (only has an effect under bfq)
 #   oom_score_adj  -1000..1000
+#   uclamp_min/max 0..1024 CPU frequency hints per task. Only applied while
+#                  a CPU uses the schedutil governor.
+#   cpu_weight     1..10000 systemd CPUWeight= for the process's whole unit
+#   io_weight      1..10000 systemd IOWeight= (needs bfq or [system] iocost)
+#                  Weights only compete between sibling units in the same
+#                  slice, so only give them to profiles that describe a whole
+#                  unit (a service or an app), not e.g. a compiler running in
+#                  your terminal's scope. The first matching process in a unit
+#                  sets its weights; they are restored when it goes away.
 #   inherit        name of a profile to start from
 # ---------------------------------------------------------------------------
 
@@ -47,17 +59,20 @@ nice = -11
 slice_us = 500
 io = "rt:0"
 oom_score_adj = -900
+cpu_weight = 400
 
 [profile.compositor]
 nice = -5
 slice_us = 1000
 io = "be:0"
 oom_score_adj = -900
+cpu_weight = 400
 
 [profile.desktop]
 nice = -3
 io = "be:2"
 oom_score_adj = -500
+cpu_weight = 200
 
 [profile.game]
 nice = -5
@@ -76,6 +91,8 @@ io = "be:7"
 sched = "batch"
 nice = 12
 io = "idle"
+cpu_weight = 25
+io_weight = 25
 
 [profile.build]
 sched = "batch"
@@ -88,6 +105,8 @@ sched = "idle"
 nice = 19
 io = "idle"
 oom_score_adj = 800
+cpu_weight = 20
+io_weight = 20
 
 # ---------------------------------------------------------------------------
 # Rules. Conditions: name, exe, cmdline, cgroup, parent, uid, plus not_name,

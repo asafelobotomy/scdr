@@ -19,6 +19,16 @@ pub struct Profile {
     pub io: Option<IoPrio>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oom_score_adj: Option<i32>,
+    /// Per-task CPU frequency hints (0..1024); only used with schedutil.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uclamp_min: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uclamp_max: Option<u32>,
+    /// systemd CPUWeight= / IOWeight= for the process's unit (1..10000).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_weight: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub io_weight: Option<u64>,
 }
 
 impl Profile {
@@ -28,6 +38,18 @@ impl Profile {
         self.slice_us = child.slice_us.or(self.slice_us);
         self.io = child.io.or(self.io);
         self.oom_score_adj = child.oom_score_adj.or(self.oom_score_adj);
+        self.uclamp_min = child.uclamp_min.or(self.uclamp_min);
+        self.uclamp_max = child.uclamp_max.or(self.uclamp_max);
+        self.cpu_weight = child.cpu_weight.or(self.cpu_weight);
+        self.io_weight = child.io_weight.or(self.io_weight);
+    }
+
+    pub fn has_uclamp(&self) -> bool {
+        self.uclamp_min.is_some() || self.uclamp_max.is_some()
+    }
+
+    pub fn has_unit_weights(&self) -> bool {
+        self.cpu_weight.is_some() || self.io_weight.is_some()
     }
 }
 
@@ -50,8 +72,11 @@ pub(super) struct RawProfile {
     slice_us: Option<u32>,
     io: Option<String>,
     oom_score_adj: Option<i32>,
+    uclamp_min: Option<u32>,
+    uclamp_max: Option<u32>,
+    cpu_weight: Option<u64>,
+    io_weight: Option<u64>,
 }
-
 
 pub(super) fn resolve_profile(
     name: &str,
@@ -89,6 +114,14 @@ pub(super) fn resolve_profile(
         }
     };
     profile.overlay(&own);
+    if let (Some(lo), Some(hi)) = (profile.uclamp_min, profile.uclamp_max) {
+        if lo > hi {
+            return Err(ConfigError::invalid(
+                path,
+                format!("profile {name:?}: uclamp_min {lo} is above uclamp_max {hi}"),
+            ));
+        }
+    }
     chain.push(name.to_owned());
 
     done.insert(
@@ -123,6 +156,16 @@ fn parse_profile(name: &str, path: &Path, rp: &RawProfile) -> Result<Profile, Co
             return Err(err(format!("oom_score_adj must be -1000..1000, got {o}")));
         }
     }
+    for (key, v) in [("uclamp_min", rp.uclamp_min), ("uclamp_max", rp.uclamp_max)] {
+        if v.is_some_and(|v| v > 1024) {
+            return Err(err(format!("{key} must be 0..1024, got {}", v.unwrap())));
+        }
+    }
+    for (key, v) in [("cpu_weight", rp.cpu_weight), ("io_weight", rp.io_weight)] {
+        if v.is_some_and(|v| !(1..=10_000).contains(&v)) {
+            return Err(err(format!("{key} must be 1..10000, got {}", v.unwrap())));
+        }
+    }
     let sched = rp
         .sched
         .as_deref()
@@ -142,5 +185,9 @@ fn parse_profile(name: &str, path: &Path, rp: &RawProfile) -> Result<Profile, Co
         slice_us: rp.slice_us,
         io,
         oom_score_adj: rp.oom_score_adj,
+        uclamp_min: rp.uclamp_min,
+        uclamp_max: rp.uclamp_max,
+        cpu_weight: rp.cpu_weight,
+        io_weight: rp.io_weight,
     })
 }

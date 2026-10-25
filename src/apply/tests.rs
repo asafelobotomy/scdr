@@ -9,6 +9,8 @@ fn base() -> Snapshot {
                 priority: 0,
                 nice: 0,
                 slice_ns: 0,
+                util_min: 0,
+                util_max: 1024,
             },
             ioprio: 0,
         },
@@ -23,7 +25,7 @@ fn profile_overlay() {
         sched: Some(Policy::Batch),
         slice_us: Some(1000),
         io: Some(IoPrio::Idle),
-        oom_score_adj: None,
+        ..Default::default()
     };
     let t = base().with_profile(&p);
     assert_eq!(t.task.cpu.policy, sched::SCHED_BATCH);
@@ -123,5 +125,31 @@ fn changes_owned_threads_and_leaves_foreign_ones() {
         let back = apply_threads(&[plain], &restore, &[target], false);
         assert_eq!(back.changed, 1, "{back:?}");
         assert_ne!(TaskState::read(plain).unwrap().cpu.slice_ns, 2_000_000);
+    });
+}
+
+#[test]
+fn uclamp_is_set_and_cleared() {
+    with_helper_threads(|plain, _| {
+        let original = Snapshot::original(plain).unwrap();
+        if original.task.cpu.policy != sched::SCHED_OTHER {
+            return;
+        }
+        let target = original.with_profile(&Profile {
+            uclamp_max: Some(512),
+            ..Default::default()
+        });
+        assert!(target.to_string().contains("uclamp=0..512"), "{target}");
+
+        let out = apply_threads(&[plain], &target, &[original], false);
+        assert_eq!(out.changed, 1, "{out:?}");
+        let cur = TaskState::read(plain).unwrap().cpu;
+        assert_eq!((cur.util_min, cur.util_max), (0, 512));
+
+        // Clearing resets to the kernel default rather than pinning 0..1024.
+        let back = apply_threads(&[plain], &original, &[target], false);
+        assert_eq!(back.changed, 1, "{back:?}");
+        let cur = TaskState::read(plain).unwrap().cpu;
+        assert_eq!((cur.util_min, cur.util_max), (0, 1024));
     });
 }

@@ -104,3 +104,37 @@ fn shipped_default_config_is_valid() {
     assert!(c.rules.len() > 5);
     assert!(c.profiles.contains_key("audio"));
 }
+
+#[test]
+fn m2_fields_validate_and_inherit() {
+    let c = cfg(&[(
+        "a.toml",
+        r#"
+        [profile.base]
+        cpu_weight = 300
+        uclamp_min = 128
+        [profile.child]
+        inherit = "base"
+        io_weight = 50
+        uclamp_max = 512
+        "#,
+    )])
+    .unwrap();
+    let p = &c.profiles["child"].profile;
+    assert_eq!((p.cpu_weight, p.io_weight), (Some(300), Some(50)));
+    assert_eq!((p.uclamp_min, p.uclamp_max), (Some(128), Some(512)));
+    assert!(p.has_unit_weights() && p.has_uclamp());
+
+    for (bad, what) in [
+        ("cpu_weight = 0", "cpu_weight"),
+        ("io_weight = 10001", "io_weight"),
+        ("uclamp_max = 2000", "uclamp_max"),
+        ("uclamp_min = 600\nuclamp_max = 500", "above uclamp_max"),
+    ] {
+        let e = cfg(&[("b.toml", &format!("[profile.x]\n{bad}\n"))]).unwrap_err();
+        assert!(e.to_string().contains(what), "{bad}: {e}");
+    }
+
+    let c = cfg(&[("s.toml", "[system]\niocost = true\n")]).unwrap();
+    assert!(c.system.iocost);
+}

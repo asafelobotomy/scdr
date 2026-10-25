@@ -45,6 +45,29 @@ impl Service {
                 }
             }
         }
+        if let Some(cg) = ex.cgroup.clone() {
+            if let Some((id, st)) = self.unit_for(&cg) {
+                let holder = if st.owner == pid {
+                    "held by this process".to_owned()
+                } else {
+                    format!("held by pid {}", st.owner)
+                };
+                ex.unit = Some(format!(
+                    "{id}: {} (was {}), {holder} for {}",
+                    st.applied, st.original, st.profile
+                ));
+                let kept: Vec<String> = [("CPUWeight", st.kept.cpu), ("IOWeight", st.kept.io)]
+                    .into_iter()
+                    .filter_map(|(k, v)| Some(format!("{k}={}", v?)))
+                    .collect();
+                if !kept.is_empty() {
+                    ex.notes.push(format!(
+                        "the unit sets its own {}; scdr left it alone",
+                        kept.join(" ")
+                    ));
+                }
+            }
+        }
         ex
     }
 
@@ -81,7 +104,10 @@ impl Service {
             by_profile,
             autogroup: system::autogroup(),
             sched_ext: system::sched_ext(),
-            io_schedulers: system::io_schedulers(),
+            units: self.unit_count(),
+            uclamp_active: self.uclamp_active,
+            governors: system::cpu_governors(),
+            disks: system::disks(),
         }
     }
 }

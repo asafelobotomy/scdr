@@ -1,6 +1,11 @@
 //! Daemon state: which processes exist, what applies to them, and why.
 
+mod knobs;
+mod lineage;
 mod report;
+mod units;
+
+use lineage::hand_tuned;
 
 use crate::apply::{self, Outcome, Snapshot};
 use crate::config::{Config, NamedProfile};
@@ -9,7 +14,7 @@ use crate::rules::Rule;
 use crate::system;
 use crate::watcher::Event;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
 
 /// Why a process is being evaluated.
@@ -88,7 +93,12 @@ pub struct Service {
     pub dry_run: bool,
     pub watcher: &'static str,
     procs: HashMap<u32, Entry>,
+    units: BTreeMap<crate::units::UnitId, units::UnitState>,
     autogroup_original: Option<bool>,
+    /// Disks (MAJ:MIN) on which scdr enabled iocost.
+    iocost_enabled: Vec<String>,
+    /// Whether uclamp settings can take effect (schedutil in use).
+    uclamp_active: bool,
     started: Instant,
     self_pid: u32,
 }
@@ -100,7 +110,10 @@ impl Service {
             dry_run,
             watcher: "polling",
             procs: HashMap::new(),
+            units: BTreeMap::new(),
             autogroup_original: None,
+            iocost_enabled: Vec::new(),
+            uclamp_active: false,
             started: Instant::now(),
             self_pid: std::process::id(),
         }
@@ -109,26 +122,6 @@ impl Service {
     pub fn startup(&mut self) {
         self.apply_system();
         self.rescan();
-    }
-
-    fn apply_system(&mut self) {
-        let Some(want) = self.config.system.autogroup else {
-            return;
-        };
-        let current = system::autogroup();
-        if current == Some(want) {
-            return;
-        }
-        if self.autogroup_original.is_none() {
-            self.autogroup_original = current;
-        }
-        if self.dry_run {
-            tracing::info!("would set sched_autogroup_enabled={}", want as u8);
-        } else if let Err(e) = system::set_autogroup(want) {
-            tracing::warn!("could not set sched_autogroup_enabled: {e}");
-        } else {
-            tracing::info!("set sched_autogroup_enabled={}", want as u8);
-        }
     }
 
     /// Handles one watcher event. Returns a process to re-check later.
@@ -177,6 +170,7 @@ impl Service {
     }
 
     pub fn rescan(&mut self) {
+        self.uclamp_active = system::uclamp_effective();
         let mut pids = procfs::pids();
         // Parents usually have lower pids, so their launcher state is known first.
         pids.sort_unstable();
@@ -185,6 +179,7 @@ impl Service {
         for pid in pids {
             self.evaluate(pid, Trigger::Scan);
         }
+        self.sweep_units();
     }
 
     pub fn reload(&mut self, config: Config) {
@@ -206,11 +201,8 @@ impl Service {
             }
         }
         tracing::info!("restored {reverted} processes");
-        if let Some(orig) = self.autogroup_original.take() {
-            if !self.dry_run {
-                let _ = system::set_autogroup(orig);
-            }
-        }
+        self.restore_units();
+        self.restore_system();
     }
 
     fn evaluate(&mut self, pid: u32, trigger: Trigger) {
@@ -264,12 +256,19 @@ impl Service {
         let matched = match excepted {
             Some(_) => None,
             None => self.config.rules.find(&info).map(|r| {
-                let p = &self.config.profiles[&r.profile];
-                (RuleRef::from_rule(r), p.clone())
+                let mut p = self.config.profiles[&r.profile].clone();
+                if !self.uclamp_active {
+                    p.profile.uclamp_min = None;
+                    p.profile.uclamp_max = None;
+                }
+                (RuleRef::from_rule(r), p)
             }),
         };
 
+        let unit_profile = matched.as_ref().map(|(_, p)| p.clone());
         self.transition(pid, &info, trigger, matched, excepted);
+        let managed = matches!(self.procs[&pid].state, State::Managed(_));
+        self.sync_unit(pid, &info, unit_profile.as_ref().filter(|_| managed));
     }
 
     fn transition(
@@ -334,37 +333,6 @@ impl Service {
             (_, None) => idle_state(),
         };
     }
-
-    /// The launcher state a new process inherits from its ancestors.
-    fn inherited_sticky(&self, mut ppid: u32) -> Option<String> {
-        for _ in 0..64 {
-            if ppid <= 1 {
-                return None;
-            }
-            if let Some(parent) = self.procs.get(&ppid) {
-                if parent.start_time != 0 {
-                    return parent.sticky.clone();
-                }
-            }
-            let comm = procfs::comm(ppid)?;
-            if self.config.exceptions.is_launcher_name(&comm) {
-                return Some(format!("started by launcher {comm:?}"));
-            }
-            ppid = procfs::Stat::read(ppid).ok()?.ppid;
-        }
-        None
-    }
-}
-
-/// A freshly exec'd process whose priorities differ from its parent's was
-/// started through something like `nice -n 10 foo` or `chrt`, which exec'd
-/// away before we saw it. Treat it as hand-tuned.
-fn hand_tuned(pid: u32, ppid: u32) -> Option<String> {
-    let me = apply::TaskState::read(pid).ok()?;
-    let parent = apply::TaskState::read(ppid).ok()?;
-    let cpu_differs = me.cpu.policy != parent.cpu.policy || me.cpu.nice != parent.cpu.nice;
-    (cpu_differs || me.ioprio != parent.ioprio)
-        .then(|| "priorities differ from its parent's (started via nice/chrt/ionice?)".to_owned())
 }
 
 fn log_apply(info: &ProcInfo, profile: &str, out: &Outcome, dry_run: bool, changed_target: bool) {

@@ -17,6 +17,7 @@ pub const SCHED_DEADLINE: u32 = 6;
 pub const SCHED_EXT: u32 = 7;
 
 pub const SCHED_FLAG_RESET_ON_FORK: u64 = 0x01;
+pub const SCHED_FLAG_UTIL_CLAMP: u64 = 0x20 | 0x40;
 
 /// EEVDF clamps custom slices to this range (`kernel/sched/fair.c:__setparam_fair`).
 pub const SLICE_MIN_US: u32 = 100;

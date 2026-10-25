@@ -22,7 +22,12 @@ pub struct CpuState {
     /// EEVDF slice in ns. In targets and originals 0 means "kernel default";
     /// read from a live task it is always the effective slice.
     pub slice_ns: u64,
+    /// uclamp requests (0..1024); (0, 1024) is the unclamped default.
+    pub util_min: u32,
+    pub util_max: u32,
 }
+
+const UCLAMP_DEFAULT: (u32, u32) = (0, 1024);
 
 impl CpuState {
     fn from_attr(a: &SchedAttr) -> Self {
@@ -31,7 +36,13 @@ impl CpuState {
             priority: a.priority,
             nice: a.nice,
             slice_ns: a.runtime,
+            util_min: a.util_min,
+            util_max: a.util_max,
         }
+    }
+
+    fn uclamp(&self) -> (u32, u32) {
+        (self.util_min, self.util_max)
     }
 
     pub fn is_realtime(&self) -> bool {
@@ -107,6 +118,10 @@ impl Snapshot {
                 cpu.slice_ns = u64::from(s) * 1000;
             }
         }
+        if p.has_uclamp() {
+            cpu.util_min = p.uclamp_min.unwrap_or(UCLAMP_DEFAULT.0);
+            cpu.util_max = p.uclamp_max.unwrap_or(UCLAMP_DEFAULT.1);
+        }
         Snapshot {
             task: TaskState {
                 cpu,
@@ -132,6 +147,9 @@ impl fmt::Display for Snapshot {
                 0 => f.write_str(" slice=default")?,
                 ns => write!(f, " slice={}us", ns / 1000)?,
             }
+        }
+        if c.uclamp() != UCLAMP_DEFAULT {
+            write!(f, " uclamp={}..{}", c.util_min, c.util_max)?;
         }
         match sched::IoPrio::from_kernel(self.task.ioprio) {
             Some(io) => write!(f, " io={io}")?,
@@ -205,6 +223,16 @@ fn slice_ok(cur: &CpuState, target: &CpuState, owned: &[Snapshot]) -> bool {
         .any(|o| o.task.cpu.slice_ns != 0 && o.task.cpu.slice_ns == cur.slice_ns)
 }
 
+/// uclamp, like slices, is only written when scdr sets it or clears its own.
+fn uclamp_ok(cur: &CpuState, target: &CpuState, owned: &[Snapshot]) -> bool {
+    if target.uclamp() != UCLAMP_DEFAULT {
+        return cur.uclamp() == target.uclamp();
+    }
+    !owned
+        .iter()
+        .any(|o| o.task.cpu.uclamp() != UCLAMP_DEFAULT && o.task.cpu.uclamp() == cur.uclamp())
+}
+
 fn apply_threads(tids: &[u32], target: &Snapshot, owned: &[Snapshot], dry_run: bool) -> Outcome {
     let mut out = Outcome::default();
 
@@ -233,7 +261,8 @@ fn apply_threads(tids: &[u32], target: &Snapshot, owned: &[Snapshot], dry_run: b
             out.foreign += 1;
             continue;
         }
-        let cpu_needed = !at_class || !slice_ok(&cur, &t, owned);
+        let uclamp_needed = !uclamp_ok(&cur, &t, owned);
+        let cpu_needed = !at_class || !slice_ok(&cur, &t, owned) || uclamp_needed;
         let io_needed = ioprio != target.task.ioprio;
         if !cpu_needed && !io_needed {
             out.unchanged += 1;
@@ -245,7 +274,7 @@ fn apply_threads(tids: &[u32], target: &Snapshot, owned: &[Snapshot], dry_run: b
         }
 
         if cpu_needed {
-            let new = SchedAttr {
+            let mut new = SchedAttr {
                 policy: t.policy,
                 priority: t.priority,
                 nice: t.nice,
@@ -257,6 +286,15 @@ fn apply_threads(tids: &[u32], target: &Snapshot, owned: &[Snapshot], dry_run: b
                 },
                 ..attr
             };
+            if uclamp_needed {
+                new.flags |= sched::SCHED_FLAG_UTIL_CLAMP;
+                // u32::MAX asks the kernel to reset a clamp to its default.
+                (new.util_min, new.util_max) = if t.uclamp() == UCLAMP_DEFAULT {
+                    (u32::MAX, u32::MAX)
+                } else {
+                    t.uclamp()
+                };
+            }
             if let Err(e) = sched::set_attr(tid, &new) {
                 push_err(&mut out, tid, "sched_setattr", e);
             }

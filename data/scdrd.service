@@ -27,7 +27,10 @@ ProtectClock=yes
 ProtectHostname=yes
 # Needs /proc/sys/kernel/sched_autogroup_enabled.
 ProtectKernelTunables=no
+# cgroupfs stays read-only (systemd sets unit weights for us); iocost is
+# the one file scdrd writes itself, and only with [system] iocost = true.
 ProtectControlGroups=yes
+ReadWritePaths=-/sys/fs/cgroup/io.cost.qos
 RestrictAddressFamilies=AF_UNIX AF_NETLINK
 RestrictNamespaces=yes
 LockPersonality=yes

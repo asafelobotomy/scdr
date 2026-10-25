@@ -9,4 +9,5 @@ pub mod rules;
 pub mod sched;
 pub mod service;
 pub mod system;
+pub mod units;
 pub mod watcher;

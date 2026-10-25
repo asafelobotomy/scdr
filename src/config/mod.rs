@@ -54,6 +54,9 @@ pub struct System {
     /// Re-check a process this long after exec, once systemd has moved it
     /// into its final cgroup. 0 disables.
     pub exec_recheck_ms: u64,
+    /// Enable the iocost controller on disks without bfq, so `IOWeight=`
+    /// takes effect. Restored on shutdown.
+    pub iocost: bool,
 }
 
 impl Default for System {
@@ -62,6 +65,7 @@ impl Default for System {
             autogroup: None,
             rescan_secs: 60,
             exec_recheck_ms: 1500,
+            iocost: false,
         }
     }
 }
@@ -141,6 +145,7 @@ struct RawSystem {
     autogroup: Option<bool>,
     rescan_secs: Option<u64>,
     exec_recheck_ms: Option<u64>,
+    iocost: Option<bool>,
 }
 
 /// A string or a list of strings.
@@ -216,6 +221,7 @@ impl Config {
                 system.autogroup = s.autogroup.or(system.autogroup);
                 system.rescan_secs = s.rescan_secs.unwrap_or(system.rescan_secs);
                 system.exec_recheck_ms = s.exec_recheck_ms.unwrap_or(system.exec_recheck_ms);
+                system.iocost = s.iocost.unwrap_or(system.iocost);
             }
             for (name, profile) in raw.profile {
                 raw_profiles.insert(name, (path.clone(), profile));

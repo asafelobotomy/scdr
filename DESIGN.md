@@ -27,7 +27,7 @@ power profile, pressure), using the levers today's kernels actually have.
 | **EEVDF custom slice** | `sched_setattr(sched_runtime)` on SCHED_NORMAL, per TID | Replaces `latency_nice`. Clamped to 0.1–100 ms (`fair.c:__setparam_fair`). A short slice means an earlier deadline, so the task wakes and preempts sooner: good for input, audio and compositors. |
 | Policy | `sched_setattr` (other, batch, idle, fifo, rr) | Every thread, not just the main one. Add `SCHED_FLAG_RESET_ON_FORK` for RT. |
 | **uclamp** | `sched_setattr` UTIL_CLAMP_MIN/MAX; `cpu.uclamp.*` per cgroup | Frequency hint for schedutil and EAS: raise min for the foreground app, cap max for background work. Only does something with the schedutil governor (intel_pstate passive or amd-pstate). |
-| cgroup weight | `cpu.weight`, `io.weight` on systemd `app-*.scope` / `*.service` | Set through systemd's `SetUnitProperties(runtime=true)` so systemd stays the owner, unlike ananicy's cgroup moves. Has an effect even when autogroup is on. |
+| cgroup weight | `cpu.weight`, `io.weight` on systemd `app-*.scope` / `*.service` | Set through systemd (`systemctl set-property --runtime`; user units via `--machine=USER@`), so systemd enables the controllers and stays the owner, unlike ananicy's cgroup moves. The controllers are normally off inside `app.slice`/`session.slice`/`system.slice`, so there is no file to write directly. Has an effect even when autogroup is on. Weights only compete between sibling units. |
 | I/O priority | `ioprio_set` | **Only takes effect under bfq.** On `none`, mq-deadline or kyber, use `io.weight` (bfq) or `io.cost` instead. Detect each disk's scheduler and pick the right lever. |
 | OOM | `oom_score_adj` | Protect the compositor, audio and the focused app; offer browser tabs and builds first. |
 | Affinity | `sched_setaffinity` | Only from explicit rules, using topology aliases (`p-cores`, `e-cores`, `x3d-cache`, `llc-N`). |
@@ -124,8 +124,8 @@ bring in the CachyOS game list (about 13.5k entries) without curating it by hand
 
 1. **Core.** Proc connector watcher, `/proc` scan, ProcTable, TOML rules, applier
    (nice, slice, policy, ioprio, oom), `explain`, PKGBUILD and systemd unit.
-2. **cgroups.** systemd scope weights and uclamp; per-disk I/O lever detection;
-   autogroup control.
+2. **cgroups** (done). systemd unit weights; uclamp, gated on schedutil; per-disk
+   I/O lever detection with opt-in iocost; autogroup control (done in M1).
 3. **Context.** KWin session agent and foreground boost; GameMode signals; PipeWire;
    power-profiles-daemon.
 4. **System policy.** scx-loader integration, EEVDF fallback tuning, PSI-driven
