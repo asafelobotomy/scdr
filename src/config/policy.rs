@@ -34,7 +34,7 @@ pub enum SchedChoice {
     Ext { name: String, mode: u32 },
 }
 
-const MODES: [&str; 5] = ["auto", "gaming", "powersave", "lowlatency", "server"];
+pub const MODES: [&str; 5] = ["auto", "gaming", "powersave", "lowlatency", "server"];
 
 impl FromStr for SchedChoice {
     type Err = String;

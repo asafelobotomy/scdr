@@ -10,6 +10,7 @@ pub mod import;
 pub mod policy;
 pub mod procfs;
 pub mod rules;
+pub mod schedulers;
 pub mod sched;
 pub mod service;
 pub mod system;

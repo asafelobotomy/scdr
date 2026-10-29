@@ -5,6 +5,11 @@
 
 use crate::config::{Eevdf, EevdfConfig, SchedChoice, SchedExt};
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Set when a scheduler trial from the widget ends; the main loop then
+/// calls [`Policy::forget_override`] before its next sync.
+pub static FORGET_OVERRIDE: AtomicBool = AtomicBool::new(false);
 
 const BASE_SLICE: &str = "/sys/kernel/debug/sched/base_slice_ns";
 const PREEMPT: &str = "/sys/kernel/debug/sched/preempt";
@@ -19,6 +24,9 @@ trait Loader {
     fn current_scheduler(&self) -> zbus::Result<String>;
     #[zbus(property)]
     fn scheduler_mode(&self) -> zbus::Result<u32>;
+    #[zbus(property)]
+    fn supported_schedulers(&self) -> zbus::Result<Vec<String>>;
+    fn scheduler_modes(&self, scx_name: &str) -> zbus::Result<Vec<u32>>;
     fn switch_scheduler(&self, scx_name: &str, sched_mode: u32) -> zbus::Result<()>;
     fn stop_scheduler(&self) -> zbus::Result<()>;
 }
@@ -144,6 +152,19 @@ impl Policy {
         )
     }
 
+    /// Forgets a hand-picked scheduler (e.g. when a trial from the widget
+    /// ends), so the next sync applies scdr's own choice again.
+    pub fn forget_override_if_asked(&mut self) {
+        if FORGET_OVERRIDE.swap(false, Ordering::Relaxed) {
+            self.forget_override();
+        }
+    }
+
+    pub fn forget_override(&mut self) {
+        self.scx_overridden = None;
+        self.scx_applied = None;
+    }
+
     /// Puts back the scheduler and EEVDF knobs scdr changed.
     pub async fn restore(&mut self, bus: Option<&zbus::Connection>) {
         if let Some(bus) = bus {
@@ -156,6 +177,28 @@ impl Policy {
             }
         }
     }
+}
+
+/// The scheduler scx_loader runs now (`Eevdf` for none).
+pub async fn current_scheduler(bus: &zbus::Connection) -> zbus::Result<SchedChoice> {
+    current(&loader(bus).await?).await
+}
+
+/// Switches through scx_loader; scdr's policy treats it as a hand pick.
+pub async fn switch_scheduler(bus: &zbus::Connection, to: &SchedChoice) -> zbus::Result<()> {
+    switch(&loader(bus).await?, to).await
+}
+
+/// Schedulers scx_loader can start (e.g. `scx_bpfland`), each with the
+/// modes it has configured.
+pub async fn supported_schedulers(bus: &zbus::Connection) -> zbus::Result<Vec<(String, Vec<u32>)>> {
+    let loader = loader(bus).await?;
+    let mut out = Vec::new();
+    for name in loader.supported_schedulers().await? {
+        let modes = loader.scheduler_modes(&name).await.unwrap_or_default();
+        out.push((name, modes));
+    }
+    Ok(out)
 }
 
 async fn loader(bus: &zbus::Connection) -> zbus::Result<LoaderProxy<'static>> {

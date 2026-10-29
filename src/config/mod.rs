@@ -6,10 +6,13 @@
 //! 2. `rules.d/*.toml` from `/usr/share/scdr` and `/etc/scdr`, sorted by file
 //!    name; a file in `/etc` masks the same name in `/usr/share`
 //! 3. `/etc/scdr/scdr.toml` (admin overrides)
+//! 4. `/var/lib/scdr/settings.toml` (written by scdrd for the widget's
+//!    settings pages; see [`layer`])
 //!
 //! Higher-precedence files override `[system]` keys and whole profiles of the
 //! same name, add to `[exceptions]`, and have their rules tried first.
 
+pub mod layer;
 pub(crate) mod policy;
 mod profile;
 mod roles;
@@ -25,6 +28,7 @@ use std::path::{Path, PathBuf};
 
 pub const ETC_DIR: &str = "/etc/scdr";
 pub const SHARE_DIR: &str = "/usr/share/scdr";
+pub const STATE_DIR: &str = "/var/lib/scdr";
 const MAIN_FILE: &str = "scdr.toml";
 const RULES_DIR: &str = "rules.d";
 
@@ -92,6 +96,8 @@ pub struct Config {
 pub struct Paths {
     pub etc: PathBuf,
     pub share: PathBuf,
+    /// scdrd's state directory, home of the settings layer.
+    pub state: PathBuf,
 }
 
 impl Default for Paths {
@@ -99,6 +105,7 @@ impl Default for Paths {
         Paths {
             etc: ETC_DIR.into(),
             share: SHARE_DIR.into(),
+            state: STATE_DIR.into(),
         }
     }
 }
@@ -130,6 +137,11 @@ impl Paths {
         let etc_main = self.etc.join(MAIN_FILE);
         if etc_main.is_file() {
             files.push(etc_main);
+        }
+
+        let layer = self.layer();
+        if layer.is_file() {
+            files.push(layer);
         }
 
         files

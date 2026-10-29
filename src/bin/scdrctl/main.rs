@@ -1,6 +1,7 @@
 //! scdrctl: inspect and control the SCDR daemon.
 
 mod import;
+mod install;
 
 use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand};
@@ -94,6 +95,15 @@ enum Command {
         #[command(flatten)]
         paths: PathArgs,
     },
+    /// Install or update sched_ext schedulers with the system's own package
+    /// tools (pamac, PackageKit, or pacman in a terminal).
+    Schedulers {
+        #[arg(value_enum)]
+        action: install::Action,
+        /// Print the command instead of running it.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Run the per-user session agent (scdr-session.service): reports the
     /// focused window, GameMode games and PipeWire audio streams to scdrd.
     Agent,
@@ -124,6 +134,8 @@ pub(crate) struct PathArgs {
     etc_dir: PathBuf,
     #[arg(long, global = true, default_value = scdr::config::SHARE_DIR)]
     share_dir: PathBuf,
+    #[arg(long, global = true, default_value = scdr::config::STATE_DIR)]
+    state_dir: PathBuf,
 }
 
 impl PathArgs {
@@ -131,6 +143,7 @@ impl PathArgs {
         let paths = Paths {
             etc: self.etc_dir.clone(),
             share: self.share_dir.clone(),
+            state: self.state_dir.clone(),
         };
         let config = Config::load(&paths)?;
         if config.files.is_empty() {
@@ -215,6 +228,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::Import { from, output, paths } => import::import(from, output, &paths)?,
+        Command::Schedulers { action, dry_run } => install::run(action, dry_run)?,
         Command::Bench { duration, interval_us, load, repeat, json } => {
             let cpus = std::thread::available_parallelism().map_or(4, |n| n.get());
             let opt = scdr::bench::Options {

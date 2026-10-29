@@ -1,13 +1,15 @@
 //! System bus interface `org.scdr.Daemon1`.
 //!
-//! Explain, Status, Processes and the `State` property return JSON (see
-//! `explain` and `service::control`); the format may still change before
-//! 1.0. Reading is open to everyone. Reload, Pause, Resume and
-//! SetRoleEnabled need root or the polkit action `org.scdr.control`. The
+//! Explain, Status, Processes, Settings and the `State` property return
+//! JSON (see `explain`, `service::control` and `config::layer`); the format
+//! may still change before 1.0. Reading is open to everyone. Reload, Pause,
+//! Resume, SetRoleEnabled, SetSettings, TryScheduler and EndSchedulerTrial
+//! need root or the polkit action `org.scdr.control`. The
 //! Set* methods come from each user's session agent; scdrd asks the bus for
 //! the caller's uid and only accepts that user's processes.
 
-use crate::config::{Config, Paths, Role};
+use crate::config::{Config, Paths, Role, SchedChoice};
+use crate::policy;
 use crate::service::Service;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -23,6 +25,8 @@ pub const OBJECT_PATH: &str = "/org/scdr/Daemon1";
 pub struct Daemon {
     pub service: Arc<Mutex<Service>>,
     pub paths: Paths,
+    /// A scheduler being tried from the widget, and the one it replaced.
+    pub trial: Mutex<Option<(SchedChoice, SchedChoice)>>,
 }
 
 #[zbus::interface(name = "org.scdr.Daemon1")]
@@ -120,6 +124,69 @@ impl Daemon {
         Ok(())
     }
 
+    /// See [`settings_json`]. Open to everyone, like Status.
+    async fn settings(&self, #[zbus(connection)] conn: &zbus::Connection) -> zbus::fdo::Result<String> {
+        settings_json(self, conn).await
+    }
+
+    /// Replaces the settings layer with `json` (a document in the config
+    /// file's schema), after checking it on top of the other files, then
+    /// reloads. On an error nothing changes and the error is returned.
+    async fn set_settings(
+        &self,
+        json: String,
+        #[zbus(header)] header: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> zbus::fdo::Result<String> {
+        authorize(&header, conn).await?;
+        let doc: serde_json::Value =
+            serde_json::from_str(&json).map_err(|e| zbus::fdo::Error::InvalidArgs(e.to_string()))?;
+        let config = self.paths.write_layer(&doc).map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        let summary = format!("{} profiles, {} rules", config.profiles.len(), config.rules.len());
+        self.service.lock().unwrap().reload(config);
+        tracing::info!("settings saved from the widget: {summary}");
+        Ok(summary)
+    }
+
+    /// Runs `scheduler` ("bpfland:gaming", or "eevdf" for none) until
+    /// EndSchedulerTrial, without saving it. scdr leaves it running as a
+    /// hand pick meanwhile.
+    async fn try_scheduler(
+        &self,
+        scheduler: String,
+        #[zbus(header)] header: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> zbus::fdo::Result<()> {
+        let choice: SchedChoice = scheduler.parse().map_err(zbus::fdo::Error::InvalidArgs)?;
+        authorize(&header, conn).await?;
+        let was = self.trial.lock().unwrap().as_ref().map(|(_, was)| was.clone());
+        let was = match was {
+            Some(w) => w,
+            None => policy::current_scheduler(conn).await?,
+        };
+        policy::switch_scheduler(conn, &choice).await?;
+        tracing::info!("trying scheduler {choice} from the widget (was {was})");
+        *self.trial.lock().unwrap() = Some((choice, was));
+        Ok(())
+    }
+
+    /// Ends a trial: puts back the scheduler it replaced and lets scdr's
+    /// policy choose again.
+    async fn end_scheduler_trial(
+        &self,
+        #[zbus(header)] header: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> zbus::fdo::Result<()> {
+        authorize(&header, conn).await?;
+        let Some((_, was)) = self.trial.lock().unwrap().take() else {
+            return Ok(());
+        };
+        policy::switch_scheduler(conn, &was).await?;
+        policy::FORGET_OVERRIDE.store(true, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!("scheduler trial ended; back to {was}");
+        Ok(())
+    }
+
     /// Re-reads the configuration and re-evaluates every process. On a config
     /// error the running configuration is kept and the error returned.
     async fn reload(
@@ -134,6 +201,30 @@ impl Daemon {
         tracing::info!("configuration reloaded: {summary}");
         Ok(summary)
     }
+}
+
+/// Everything the widget's settings pages show, as JSON: the settings layer,
+/// the merged files below it, and the schedulers scx_loader offers.
+async fn settings_json(d: &Daemon, conn: &zbus::Connection) -> zbus::fdo::Result<String> {
+    let failed = |e: crate::config::ConfigError| zbus::fdo::Error::Failed(e.to_string());
+    let (schedulers, scx_error) = match policy::supported_schedulers(conn).await {
+        Ok(s) => (crate::schedulers::inventory(s), None),
+        Err(e) => (Vec::new(), Some(e.to_string())),
+    };
+    let current = policy::current_scheduler(conn).await.ok().map(|c| c.to_string());
+    let trial = d.trial.lock().unwrap().as_ref().map(|(t, w)| (t.to_string(), w.to_string()));
+    let json = serde_json::json!({
+        "layer_file": d.paths.layer(),
+        "layer": d.paths.layer_document().map_err(failed)?,
+        "base": d.paths.base_document().map_err(failed)?,
+        "schedulers": schedulers,
+        "scx_loader_error": scx_error,
+        "current_scheduler": current,
+        "trial": trial.map(|(trying, was)| serde_json::json!({"trying": trying, "was": was})),
+        "modes": crate::config::policy::MODES,
+        "power_profiles": ["power-saver", "balanced", "performance"],
+    });
+    Ok(json.to_string())
 }
 
 /// Root passes; anyone else needs polkit's `org.scdr.control`, which may
@@ -198,6 +289,8 @@ pub trait Daemon1 {
     fn pause(&self) -> zbus::Result<()>;
     fn resume(&self) -> zbus::Result<()>;
     fn set_role_enabled(&self, role: &str, enabled: bool) -> zbus::Result<()>;
+    fn settings(&self) -> zbus::Result<String>;
+    fn set_settings(&self, json: &str) -> zbus::Result<String>;
     #[zbus(property)]
     fn state(&self) -> zbus::Result<String>;
     fn set_foreground(&self, pid: u32) -> zbus::Result<()>;

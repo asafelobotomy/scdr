@@ -20,7 +20,7 @@ path = "src/bin/scdrctl/main.rs"
 [dependencies]
 anyhow = "1"
 futures-util = "0.3"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 globset = "0.4"
 kdl = { version = "6", features = ["v1"] }
 libc = "0.2"

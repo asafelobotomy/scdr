@@ -5,8 +5,10 @@
   <vendor>SCDR</vendor>
   <vendor_url>https://github.com/asafelobotomy/scdr</vendor_url>
 
-  <!-- Pause/resume scdrd, switch its roles on or off, reload its config.
-       Reading its state needs no authorization. -->
+  <!-- Pause/resume scdrd, switch its roles on or off, reload its config,
+       save settings from the widget (profiles and rules, which can raise any
+       process's priority) and try sched_ext schedulers. Reading its state
+       needs no authorization. -->
   <action id="org.scdr.control">
     <description>Control the SCDR scheduling daemon</description>
     <message>Authentication is required to change how SCDR schedules processes</message>

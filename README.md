@@ -100,6 +100,25 @@ over the system bus and follows the daemon's `State` property, so it doesn't
 poll. Changing anything needs root or polkit's `org.scdr.control`, which asks
 for your password and remembers it for a few minutes.
 
+Its settings (the gear in the popup, or right-click → *Configure SCDR…*) have
+five pages:
+
+- **Schedulers**: turn sched_ext on, pick the scheduler for default, gaming
+  and each power profile, set EEVDF's preemption and base slice, and try any
+  installed scheduler right away without saving it. *Install*, *Update* and
+  *Latest from Git* use the system's own installer: pamac on Manjaro,
+  PackageKit elsewhere, or pacman in a terminal (`scdrctl schedulers`).
+- **Pressure & I/O**: background-role thresholds and hold time, iocost, autogroup.
+- **Roles**: the profile each role gives, by default and per power profile.
+- **Profiles**: edit any profile or add your own.
+- **Rules**: add, reorder and edit your rules; the shipped and /etc rules are
+  listed below them.
+
+scdrd checks what you save on top of the other config files, then writes it
+to `/var/lib/scdr/settings.toml`, the highest-precedence layer, and reloads.
+Your files in `/etc/scdr` are never rewritten; delete `settings.toml` to drop
+everything set in the widget.
+
 ## Using it
 
 ```sh

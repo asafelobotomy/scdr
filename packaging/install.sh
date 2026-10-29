@@ -18,8 +18,9 @@ install -Dm644 data/org.scdr.policy "$dest/usr/share/polkit-1/actions/org.scdr.p
 install -Dm644 -t "$dest/usr/share/gnome-shell/extensions/$ext" \
   "data/gnome-shell/$ext/metadata.json" "data/gnome-shell/$ext/extension.js"
 widget=data/plasmoid/org.scdr.widget
-install -Dm644 "$widget/metadata.json" "$dest/usr/share/plasma/plasmoids/org.scdr.widget/metadata.json"
-install -Dm644 "$widget/contents/ui/main.qml" "$dest/usr/share/plasma/plasmoids/org.scdr.widget/contents/ui/main.qml"
+find "$widget" -type f | while read -r f; do
+  install -Dm644 "$f" "$dest/usr/share/plasma/plasmoids/org.scdr.widget/${f#"$widget"/}"
+done
 install -Dm644 README.md "$dest/usr/share/doc/scdr/README.md"
 install -Dm644 DESIGN.md "$dest/usr/share/doc/scdr/DESIGN.md"
 install -Dm644 LICENSE "$dest/usr/share/licenses/scdr/LICENSE"

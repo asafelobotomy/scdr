@@ -144,7 +144,18 @@ module: it binds to the daemon's `State` property (a JSON summary, emitted
 through PropertiesChanged when it changes, at most every 2 s) and calls
 `Pause`, `Resume` and `SetRoleEnabled`. Those, and `Reload`, need root or
 polkit's `org.scdr.control` (`auth_admin_keep`); pause and role switches
-persist in `/var/lib/scdr/runtime.json`. A full app (Kirigami via cxx-qt,
+persist in `/var/lib/scdr/runtime.json`.
+
+Its Configure dialog edits a settings layer, `/var/lib/scdr/settings.toml`
+(`config::layer`), in the config file's own schema: `Settings()` returns the
+layer and the merged files below it as JSON (so a page can show what a
+setting falls back to), and `SetSettings(json)` validates the new layer on top
+of those files before writing it and reloading. Keeping it in the state
+directory leaves `ProtectSystem=strict` intact and admin files untouched.
+`TryScheduler`/`EndSchedulerTrial` run a scheduler without saving it; the
+policy treats it as a hand pick until the trial ends. Installing schedulers is
+left to the session: `scdrctl schedulers` hands off to pamac, PackageKit or
+pacman in a terminal, so scdrd never installs packages. A full app (Kirigami via cxx-qt,
 or Slint for other desktops) can build on the same API, plus `Processes()`
 and `Explain()`.
 

@@ -33,6 +33,9 @@ struct Args {
     /// Shipped config directory.
     #[arg(long, default_value = scdr::config::SHARE_DIR)]
     share_dir: PathBuf,
+    /// State directory: runtime.json and the widget's settings layer.
+    #[arg(long, env = "STATE_DIRECTORY", default_value = scdr::config::STATE_DIR)]
+    state_dir: PathBuf,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -53,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
     let paths = Paths {
         etc: args.etc_dir,
         share: args.share_dir,
+        state: args.state_dir,
     };
     let config = Config::load(&paths).context("loading configuration")?;
     if config.files.is_empty() {
@@ -93,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
         let iface = Daemon {
             service: service.clone(),
             paths: paths.clone(),
+            trial: Default::default(),
         };
         let conn = zbus::connection::Builder::system()?
             .name(BUS_NAME)?
@@ -208,6 +213,7 @@ async fn policy_step(policy: &mut Policy, bus: Option<&zbus::Connection>, servic
         service.lock().unwrap().policy_report = vec!["paused: scheduler and EEVDF knobs left as they were".into()];
         return;
     }
+    policy.forget_override_if_asked();
     let (sched_ext, eevdf, power, gaming) = {
         let mut svc = service.lock().unwrap();
         if let Some(avg10) = cpu_some_avg10() {

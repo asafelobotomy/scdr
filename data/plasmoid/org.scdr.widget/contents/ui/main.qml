@@ -1,6 +1,7 @@
 // SCDR panel widget: status and quick controls for scdrd, over the system
 // bus. Reads the daemon's State property (updated through PropertiesChanged,
 // no polling) and calls Pause/Resume/SetRoleEnabled, which polkit guards.
+// The Configure dialog (contents/config) edits scdrd's settings layer.
 
 import QtQuick
 import QtQuick.Layouts
@@ -133,6 +134,14 @@ PlasmoidItem {
                     PlasmaComponents3.ToolTip.text: root.paused
                         ? i18n("Resume: apply priorities again")
                         : i18n("Pause: restore every priority, weight and scheduler scdr changed")
+                    PlasmaComponents3.ToolTip.visible: hovered
+                }
+                PlasmaComponents3.ToolButton {
+                    icon.name: "configure"
+                    text: i18n("Settings…")
+                    display: QQC2.AbstractButton.IconOnly
+                    onClicked: Plasmoid.internalAction("configure").trigger()
+                    PlasmaComponents3.ToolTip.text: i18n("Schedulers, pressure, roles, profiles and rules")
                     PlasmaComponents3.ToolTip.visible: hovered
                 }
             }
