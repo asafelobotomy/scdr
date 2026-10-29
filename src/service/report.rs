@@ -121,6 +121,9 @@ impl Service {
             sessions: self.sessions_report(),
             cpu_pressure: self.cpu_pressure().0,
             pressure_active: self.cpu_pressure().1,
+            memory_pressure: system::psi_some_avg10("memory"),
+            io_pressure: system::psi_some_avg10("io"),
+            cpufreq_driver: system::cpufreq_driver(),
             policy: self.policy_report.clone(),
         }
     }

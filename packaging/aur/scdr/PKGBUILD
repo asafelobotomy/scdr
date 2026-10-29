@@ -1,7 +1,7 @@
 # Maintainer: asafelobotomy <213836723+asafelobotomy@users.noreply.github.com>
 
 pkgname=scdr
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Process scheduling and priority daemon for EEVDF and sched_ext kernels"
 arch=('x86_64' 'aarch64')

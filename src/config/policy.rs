@@ -17,6 +17,7 @@
 //! [pressure]                     # CPU PSI "some" avg10, in percent
 //! high = 20.0
 //! low = 5.0
+//! hold_secs = 30                 # minimum time between switches
 //! ```
 
 use super::ConfigError;
@@ -116,11 +117,13 @@ impl EevdfConfig {
 pub struct Pressure {
     pub high: f64,
     pub low: f64,
+    /// Minimum seconds between switching the background role on and off.
+    pub hold_secs: u64,
 }
 
 impl Default for Pressure {
     fn default() -> Self {
-        Pressure { high: 20.0, low: 5.0 }
+        Pressure { high: 20.0, low: 5.0, hold_secs: 30 }
     }
 }
 
@@ -155,6 +158,7 @@ pub(super) struct RawEevdfKnobs {
 pub(super) struct RawPressure {
     high: Option<f64>,
     low: Option<f64>,
+    hold_secs: Option<u64>,
 }
 
 pub(super) fn merge_sched_ext(into: &mut SchedExt, path: &Path, raw: RawSchedExt) -> Result<(), ConfigError> {
@@ -203,6 +207,10 @@ pub(super) fn merge_eevdf(into: &mut EevdfConfig, path: &Path, raw: RawEevdf) ->
 pub(super) fn merge_pressure(into: &mut Pressure, path: &Path, raw: RawPressure) -> Result<(), ConfigError> {
     into.high = raw.high.unwrap_or(into.high);
     into.low = raw.low.unwrap_or(into.low);
+    into.hold_secs = raw.hold_secs.unwrap_or(into.hold_secs);
+    if into.hold_secs > 3600 {
+        return Err(ConfigError::invalid(path, format!("[pressure] hold_secs must be 0..3600, got {}", into.hold_secs)));
+    }
     if !(0.0..=100.0).contains(&into.low) || !(0.0..=100.0).contains(&into.high) || into.low >= into.high {
         return Err(ConfigError::invalid(path, format!(
             "[pressure] needs 0 <= low < high <= 100, got low={} high={}", into.low, into.high

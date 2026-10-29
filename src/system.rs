@@ -58,6 +58,27 @@ pub fn cpu_governors() -> Vec<String> {
     govs
 }
 
+/// The cpufreq driver, e.g. `intel_pstate`, and its energy/performance
+/// preference when it has one.
+pub fn cpufreq_driver() -> Option<(String, Option<String>)> {
+    let dir = std::path::Path::new("/sys/devices/system/cpu/cpu0/cpufreq");
+    let read = |f: &str| fs::read_to_string(dir.join(f)).ok().map(|s| s.trim().to_owned());
+    Some((read("scaling_driver")?, read("energy_performance_preference")))
+}
+
+/// `some avg10` from a /proc/pressure file (`cpu`, `memory`, `io`), in percent.
+pub fn psi_some_avg10(resource: &str) -> Option<f64> {
+    parse_psi_some_avg10(&fs::read_to_string(format!("/proc/pressure/{resource}")).ok()?)
+}
+
+pub(crate) fn parse_psi_some_avg10(s: &str) -> Option<f64> {
+    let line = s.lines().find(|l| l.starts_with("some "))?;
+    line.split_ascii_whitespace()
+        .find_map(|f| f.strip_prefix("avg10="))?
+        .parse()
+        .ok()
+}
+
 /// uclamp only steers CPU frequency under the schedutil governor.
 pub fn uclamp_effective() -> bool {
     cpu_governors().iter().any(|g| g == "schedutil")

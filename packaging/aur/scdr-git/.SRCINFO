@@ -1,6 +1,6 @@
 pkgbase = scdr-git
 	pkgdesc = Process scheduling and priority daemon for EEVDF and sched_ext kernels (git)
-	pkgver = 0.1.0.r0.g0000000
+	pkgver = 0.2.0.r0.g0000000
 	pkgrel = 1
 	url = https://github.com/asafelobotomy/scdr
 	install = scdr.install

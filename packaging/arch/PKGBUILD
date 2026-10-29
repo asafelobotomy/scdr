@@ -4,7 +4,7 @@
 # For the AUR, replace _root with a source=() git URL and add checksums.
 
 pkgname=scdr
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Process scheduling and priority daemon for EEVDF and sched_ext kernels"
 arch=('x86_64' 'aarch64')

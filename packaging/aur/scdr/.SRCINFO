@@ -1,6 +1,6 @@
 pkgbase = scdr
 	pkgdesc = Process scheduling and priority daemon for EEVDF and sched_ext kernels
-	pkgver = 0.1.0
+	pkgver = 0.2.0
 	pkgrel = 1
 	url = https://github.com/asafelobotomy/scdr
 	install = scdr.install
@@ -17,7 +17,7 @@ pkgbase = scdr
 	optdepends = pipewire: audio-client role (pw-dump)
 	optdepends = gamemode: game role
 	optdepends = power-profiles-daemon: per-power-profile roles
-	source = scdr-0.1.0.tar.gz::https://github.com/asafelobotomy/scdr/archive/refs/tags/v0.1.0.tar.gz
+	source = scdr-0.2.0.tar.gz::https://github.com/asafelobotomy/scdr/archive/refs/tags/v0.2.0.tar.gz
 	sha256sums = SKIP
 
 pkgname = scdr

@@ -112,6 +112,8 @@ pub struct Service {
     power_profile: Option<String>,
     cpu_pressure: Option<f64>,
     pressure_active: bool,
+    /// When the background role last switched, for `[pressure] hold_secs`.
+    pressure_switched: Option<Instant>,
     paused: bool,
     roles_off: std::collections::BTreeSet<crate::config::Role>,
     /// Scheduler policy status lines, from the main loop.
@@ -135,6 +137,7 @@ impl Service {
             power_profile: None,
             cpu_pressure: None,
             pressure_active: false,
+            pressure_switched: None,
             paused: false,
             roles_off: Default::default(),
             policy_report: Vec::new(),
@@ -317,7 +320,7 @@ impl Service {
                 let target = m.original.with_profile(&profile.profile);
                 if target != m.target || trigger == Trigger::Scan {
                     m.last = apply::apply(pid, &target, &[m.original, m.target], dry_run);
-                    log_apply(info, &profile.name, &m.last, dry_run, target != m.target);
+                    log_apply(info, &profile.name, &m.last, dry_run, target != m.target, trigger);
                 }
                 m.rule = rule;
                 m.profile = profile.name;
@@ -326,11 +329,13 @@ impl Service {
             }
             (State::Managed(m), None) => {
                 apply::apply(pid, &m.original, &[m.target], dry_run);
-                tracing::info!(
-                    "{} [{pid}]: restored ({})",
-                    info.comm,
-                    excepted.as_deref().unwrap_or("no rule matches")
-                );
+                let why = excepted.as_deref().unwrap_or("no rule matches");
+                // A role ending is logged once for its unit, not per process.
+                if trigger == Trigger::Role {
+                    tracing::debug!("{} [{pid}]: restored ({why})", info.comm);
+                } else {
+                    tracing::info!("{} [{pid}]: restored ({why})", info.comm);
+                }
                 idle_state()
             }
             (_, Some((rule, profile))) => match Snapshot::original(pid) {
@@ -340,7 +345,7 @@ impl Service {
                 Ok(original) => {
                     let target = original.with_profile(&profile.profile);
                     let last = apply::apply(pid, &target, &[original], dry_run);
-                    log_apply(info, &profile.name, &last, dry_run, true);
+                    log_apply(info, &profile.name, &last, dry_run, true, trigger);
                     State::Managed(Box::new(Managed {
                         rule,
                         profile: profile.name,
@@ -356,13 +361,26 @@ impl Service {
     }
 }
 
-fn log_apply(info: &ProcInfo, profile: &str, out: &Outcome, dry_run: bool, changed_target: bool) {
+fn log_apply(
+    info: &ProcInfo,
+    profile: &str,
+    out: &Outcome,
+    dry_run: bool,
+    changed_target: bool,
+    trigger: Trigger,
+) {
     if !changed_target && out.changed == 0 && out.errors.is_empty() {
         return;
     }
     let verb = if dry_run { "would apply" } else { "applied" };
     if out.errors.is_empty() {
-        tracing::info!("{} [{}]: {verb} {profile} ({out})", info.comm, info.pid);
+        // Children usually inherit their parent's values, so most new processes
+        // need no change; role switches are logged once for their unit.
+        if out.changed == 0 || trigger == Trigger::Role {
+            tracing::debug!("{} [{}]: {verb} {profile} ({out})", info.comm, info.pid);
+        } else {
+            tracing::info!("{} [{}]: {verb} {profile} ({out})", info.comm, info.pid);
+        }
     } else {
         tracing::warn!(
             "{} [{}]: {verb} {profile} ({out}): {}",

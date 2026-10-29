@@ -53,8 +53,10 @@ benchmark. Packaged for the AUR (`packaging/aur`).
   power-saver.
 - Under CPU pressure (PSI above `[pressure] high`), apps that aren't focused
   get the `background` role (`CPUWeight=50`) until pressure drops below
-  `low`. Without a session agent nothing is demoted, since scdr can't tell
-  which app is focused.
+  `low`, switching at most once every `hold_secs` (30 s). Without a session
+  agent nothing is demoted, since scdr can't tell which app is focused.
+  `scdrctl status` also shows memory and io pressure, which scdr doesn't act
+  on: its levers share CPU and disk time, they don't free memory.
 - Optional scheduler policy: `[sched_ext]` picks a sched_ext scheduler
   through scx_loader (gaming, then power profile, then default) and backs
   off if you switch by hand; `[eevdf]` sets the kernel's base slice and

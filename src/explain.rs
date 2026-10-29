@@ -63,6 +63,13 @@ pub struct Status {
     pub sessions: Vec<SessionReport>,
     pub cpu_pressure: Option<f64>,
     pub pressure_active: bool,
+    /// Memory and io PSI `some avg10`; scdr only reacts to CPU pressure.
+    #[serde(default)]
+    pub memory_pressure: Option<f64>,
+    #[serde(default)]
+    pub io_pressure: Option<f64>,
+    #[serde(default)]
+    pub cpufreq_driver: Option<(String, Option<String>)>,
     pub policy: Vec<String>,
 }
 
@@ -308,12 +315,18 @@ impl fmt::Display for Status {
             off(&self.roles.game),
             off(&self.roles.background)
         )?;
+        let pct = |p: Option<f64>| p.map_or("?".into(), |p| format!("{p:.1}%"));
         writeln!(
             f,
-            "pressure  cpu {} → background role {}",
-            self.cpu_pressure.map_or("?".into(), |p| format!("{p:.1}%")),
-            if self.pressure_active { "on" } else { "off" }
+            "pressure  cpu {} → background role {}; memory {}, io {}",
+            pct(self.cpu_pressure),
+            if self.pressure_active { "on" } else { "off" },
+            pct(self.memory_pressure),
+            pct(self.io_pressure)
         )?;
+        if self.memory_pressure.is_some_and(|m| m >= 10.0) {
+            writeln!(f, "          memory stalls are high: scdr's levers share CPU and io, they don't free memory")?;
+        }
         for line in &self.policy {
             writeln!(f, "scheduler {line}")?;
         }
@@ -330,7 +343,16 @@ impl fmt::Display for Status {
                 s.games
             )?;
         }
-        let uclamp = if self.uclamp_active { "applied" } else { "not applied (needs schedutil)" };
+        let uclamp = match &self.cpufreq_driver {
+            _ if self.uclamp_active => "applied".to_owned(),
+            // Active-mode pstate drivers pick frequencies in hardware (HWP);
+            // the governor name doesn't mean what it does under acpi-cpufreq.
+            Some((driver, epp)) if driver == "intel_pstate" || driver == "amd-pstate-epp" => format!(
+                "not applied: {driver} picks frequencies itself{}",
+                epp.as_deref().map(|e| format!(" (EPP {e})")).unwrap_or_default()
+            ),
+            _ => "not applied (needs schedutil)".to_owned(),
+        };
         writeln!(f, "uclamp    {uclamp}; governor {}", self.governors.join("/"))?;
         for d in &self.disks {
             writeln!(f, "disk      {} [{}{}]: {}", d.name, d.scheduler, if d.iocost { ", iocost" } else { "" }, d.lever())?;

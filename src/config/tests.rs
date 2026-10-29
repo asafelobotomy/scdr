@@ -189,6 +189,7 @@ fn scheduler_policy_and_pressure() {
         base_slice_us = 4000
         [pressure]
         high = 30.0
+        hold_secs = 10
         "#,
     )])
     .unwrap();
@@ -203,12 +204,13 @@ fn scheduler_policy_and_pressure() {
     let ps = c.eevdf.for_power(Some("power-saver"));
     assert_eq!((ps.preempt.as_deref(), ps.base_slice_us), (Some("lazy"), Some(4000)));
     assert_eq!(c.eevdf.for_power(None).preempt.as_deref(), Some("full"));
-    assert_eq!((c.pressure.high, c.pressure.low), (30.0, 5.0));
+    assert_eq!((c.pressure.high, c.pressure.low, c.pressure.hold_secs), (30.0, 5.0, 10));
 
     for bad in [
         "[sched_ext]\ndefault = \"lavd:turbo\"\n",
         "[eevdf]\npreempt = \"always\"\n",
         "[pressure]\nhigh = 4.0\n",
+        "[pressure]\nhold_secs = 86400\n",
     ] {
         assert!(cfg(&[("b.toml", bad)]).is_err(), "{bad}");
     }

@@ -56,10 +56,12 @@ background = "background"
 foreground = ""
 
 # CPU pressure (PSI "some" avg10: % of time tasks waited for a CPU) that
-# turns the background role on, and off again.
+# turns the background role on, and off again. hold_secs is the least time
+# between switches, so short spikes don't flip every app's weights.
 [pressure]
 high = 20.0
 low = 5.0
+hold_secs = 30
 
 # ---------------------------------------------------------------------------
 # Scheduler policy. Both are off unless configured; both are restored when

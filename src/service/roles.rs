@@ -2,12 +2,12 @@
 //! playing audio, and GameMode games. Each session is keyed by the agent's
 //! uid; scdrd only accepts pids that belong to that uid.
 
-use super::{RuleRef, Service, Trigger};
+use super::{RuleRef, Service, State, Trigger};
 use crate::config::{NamedProfile, Role};
 use crate::procfs::ProcInfo;
 use crate::units::UnitId;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct Session {
@@ -39,12 +39,17 @@ impl Service {
         let new = (in_app_slice && UnitId::from_cgroup(&info.cgroup).is_some())
             .then(|| (info.cgroup.clone(), pid));
 
+        // Without a focused app the background role can't be placed; if
+        // pressure came first (e.g. right after a restart), re-check every app.
+        let first = self.sessions.get(&uid).is_none_or(|s| s.foreground.is_none());
         let session = self.session(uid, sender);
         let old = std::mem::replace(&mut session.foreground, new.clone());
-        if old.as_ref().map(|o| &o.0) == new.as_ref().map(|n| &n.0) {
+        let mut affected = Vec::new();
+        if first && self.pressure_active {
+            affected.extend(cgroup_pids(app_slice(uid).trim_end_matches('/')));
+        } else if old.as_ref().map(|o| &o.0) == new.as_ref().map(|n| &n.0) {
             return Ok(()); // same app, another window
         }
-        let mut affected = Vec::new();
         for (cgroup, _) in old.iter().chain(new.iter()) {
             affected.extend(cgroup_pids(cgroup));
         }
@@ -185,8 +190,26 @@ impl Service {
     pub(super) fn reevaluate(&mut self, mut pids: Vec<u32>) {
         pids.sort_unstable();
         pids.dedup();
+        // Per-process lines are debug-level for role changes; this summarises them.
+        let mut moved: BTreeMap<String, usize> = BTreeMap::new();
         for pid in pids {
+            let before = self.profile_of(pid);
             self.evaluate(pid, Trigger::Role);
+            let after = self.profile_of(pid);
+            if before != after {
+                *moved.entry(after.unwrap_or_else(|| "restored".into())).or_default() += 1;
+            }
+        }
+        if !moved.is_empty() {
+            let summary: Vec<String> = moved.iter().map(|(p, n)| format!("{n} → {p}")).collect();
+            tracing::info!("roles: {}", summary.join(", "));
+        }
+    }
+
+    fn profile_of(&self, pid: u32) -> Option<String> {
+        match &self.procs.get(&pid)?.state {
+            State::Managed(m) => Some(m.profile.clone()),
+            _ => None,
         }
     }
 }
