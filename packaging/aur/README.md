@@ -9,7 +9,7 @@ the local `packaging/arch/PKGBUILD`.
 ## Publishing
 
 1. Push this repository to `https://github.com/asafelobotomy/scdr`.
-2. For a release, tag it (`git tag v0.1.0 && git push --tags`), then in
+2. For a release, tag it (`git tag v$pkgver && git push --tags`), then in
    `scdr/` run `updpkgsums` to replace the `SKIP` checksum.
 3. Test in a clean chroot: `extra-x86_64-build` (devtools), or at least
    `makepkg -f && namcap PKGBUILD *.pkg.tar.zst`.

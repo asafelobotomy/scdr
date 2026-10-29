@@ -171,10 +171,13 @@ pub fn notes(p: &Profile) -> Vec<String> {
         }
     }
     if p.has_uclamp() && !system::uclamp_effective() {
-        notes.push(format!(
-            "uclamp needs the schedutil governor; this system uses {}, so it is not applied",
-            system::cpu_governors().join("/")
-        ));
+        notes.push(match system::pstate_picks_frequency(system::cpufreq_driver().as_ref()) {
+            Some(why) => format!("uclamp is not applied: {why}"),
+            None => format!(
+                "uclamp needs the schedutil governor; this system uses {}, so it is not applied",
+                system::cpu_governors().join("/")
+            ),
+        });
     }
     if p.nice.is_some() && system::autogroup() == Some(true) {
         notes.push("autogroup is on: nice only orders tasks within the same session".into());
@@ -343,15 +346,10 @@ impl fmt::Display for Status {
                 s.games
             )?;
         }
-        let uclamp = match &self.cpufreq_driver {
+        let uclamp = match system::pstate_picks_frequency(self.cpufreq_driver.as_ref()) {
             _ if self.uclamp_active => "applied".to_owned(),
-            // Active-mode pstate drivers pick frequencies in hardware (HWP);
-            // the governor name doesn't mean what it does under acpi-cpufreq.
-            Some((driver, epp)) if driver == "intel_pstate" || driver == "amd-pstate-epp" => format!(
-                "not applied: {driver} picks frequencies itself{}",
-                epp.as_deref().map(|e| format!(" (EPP {e})")).unwrap_or_default()
-            ),
-            _ => "not applied (needs schedutil)".to_owned(),
+            Some(why) => format!("not applied: {why}"),
+            None => "not applied (needs schedutil)".to_owned(),
         };
         writeln!(f, "uclamp    {uclamp}; governor {}", self.governors.join("/"))?;
         for d in &self.disks {

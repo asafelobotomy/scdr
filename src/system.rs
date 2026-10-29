@@ -66,6 +66,17 @@ pub fn cpufreq_driver() -> Option<(String, Option<String>)> {
     Some((read("scaling_driver")?, read("energy_performance_preference")))
 }
 
+/// Why uclamp has no effect with this cpufreq driver, if the driver says.
+/// Active-mode pstate drivers pick frequencies in hardware (HWP); the
+/// governor name doesn't mean what it does under acpi-cpufreq.
+pub fn pstate_picks_frequency(driver: Option<&(String, Option<String>)>) -> Option<String> {
+    let (name, epp) = driver?;
+    (name == "intel_pstate" || name == "amd-pstate-epp").then(|| {
+        let epp = epp.as_deref().map(|e| format!(" (EPP {e})")).unwrap_or_default();
+        format!("{name} picks frequencies itself{epp}")
+    })
+}
+
 /// `some avg10` from a /proc/pressure file (`cpu`, `memory`, `io`), in percent.
 pub fn psi_some_avg10(resource: &str) -> Option<f64> {
     parse_psi_some_avg10(&fs::read_to_string(format!("/proc/pressure/{resource}")).ok()?)

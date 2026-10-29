@@ -33,7 +33,7 @@ power profile, pressure), using the levers today's kernels actually have.
 | Affinity | `sched_setaffinity` | Only from explicit rules, using topology aliases (`p-cores`, `e-cores`, `x3d-cache`, `llc-N`). |
 | Global EEVDF | debugfs `sched/base_slice_ns`, `sched/preempt` | `preempt` can be none, voluntary, full or lazy (`PREEMPT_DYNAMIC`). |
 | sched_ext | `/sys/kernel/sched_ext/state`; `org.scx.Loader` | While a BPF scheduler is loaded, slice and uclamp may be ignored. The applier must check which scheduler is active. |
-| Pressure | `/proc/pressure/{cpu,io,memory}` poll triggers | Event-driven, so no polling loop is needed. |
+| Pressure | `/proc/pressure/{cpu,io,memory}` | CPU `some avg10` is sampled every 2 s and drives the background role. Memory and io are only reported: lowering weights shares CPU and disk time, it doesn't free memory. PSI poll triggers would remove the sampling. |
 | Process events | netlink `CN_PROC` (fork, exec, comm, exit) | In-process. No bcc, no Python. Use a pidfd to avoid PID-reuse races. |
 
 ## 3. Architecture
@@ -131,7 +131,7 @@ bring in the CachyOS game list (about 13.5k entries) without curating it by hand
    per-power-profile overrides from power-profiles-daemon.
 4. **System policy** (done). scx_loader integration with hand-override back-off,
    EEVDF base slice / preempt per power profile, PSI-driven background role
-   (sampled every 2 s, with hysteresis).
+   (sampled every 2 s, with hysteresis and a minimum hold between switches).
 5. **Ecosystem** (done). `scdrctl import ananicy|system76`; Hyprland, niri and
    GNOME Shell foreground sources; `scdrctl bench` (wake-up latency under load);
    AUR `scdr` / `scdr-git` PKGBUILDs sharing `packaging/install.sh`; MPL-2.0.
