@@ -150,13 +150,16 @@ void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 
 	/*
 	 * Changing class means changing clocks: start level with the new one.
-	 * Otherwise bound the credit a long sleeper can bring back.
+	 * Otherwise bound the credit a long sleeper brings back, on wakeup
+	 * only: a task put back after its slice hasn't slept, and flooring it
+	 * against a clock that low-weight tasks race ahead would erase the
+	 * lead its weight earned (nice 0 vs 10 got 5:1 instead of ~9:1).
 	 */
 	clock = tctx->batch ? vtime_now[BATCH_DSQ] : vtime_now[INTERACTIVE_DSQ];
 	vruntime = tctx->vruntime;
 	if (tctx->batch != was_batch)
 		vruntime = clock;
-	else if (vtime_before(vruntime, clock - lag_ns))
+	else if ((enq_flags & SCX_ENQ_WAKEUP) && vtime_before(vruntime, clock - lag_ns))
 		vruntime = clock - lag_ns;
 	tctx->vruntime = vruntime;
 
