@@ -18,8 +18,9 @@
  *     guard so builds still make progress.
  *   - A task is batch if scdr (or anyone) gave it SCHED_BATCH/SCHED_IDLE,
  *     or if its average run burst between sleeps exceeds batch_thresh_ns.
- *     Tasks with a latency hint, nice < 0, or PF_KTHREAD are never demoted
- *     by the heuristic.
+ *     Tasks with a latency hint or nice < 0 get hint_thresh_mult times the
+ *     threshold (scdr's foreground role covers a whole app, hogs included);
+ *     kthreads are never demoted.
  *   - scdr's per-profile slice_us (sched_attr custom slice) is honoured as
  *     the task's time slice and marks it latency-sensitive.
  *   - An interactive wakeup with no idle CPU preempts a batch task that has
@@ -30,118 +31,28 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 #include "devbox.h"
+#include "devbox.bpf.h"
 
 char _license[] SEC("license") = "GPL";
 
-#define BPF_STRUCT_OPS(name, args...) \
-	SEC("struct_ops/" #name) BPF_PROG(name, ##args)
-#define BPF_STRUCT_OPS_SLEEPABLE(name, args...) \
-	SEC("struct_ops.s/" #name) BPF_PROG(name, ##args)
-
-#define INTERACTIVE_DSQ	0
-#define BATCH_DSQ	1
-#define MAX_CPUS	512	/* power of two, used as an index mask */
-
-#define PF_KTHREAD	0x00200000
-#define SCHED_BATCH	3
-#define SCHED_IDLE	5
-#define NICE_0_PRIO	120
-
-/* Tunables, set by the loader before load. */
-const volatile u64 slice_ns = 3000000ULL;	   /* interactive slice */
-const volatile u64 slice_min_ns = 500000ULL;	   /* floor under load */
-const volatile u64 batch_slice_ns = 12000000ULL;   /* long, cache-friendly */
-const volatile u64 batch_thresh_ns = 8000000ULL;   /* avg burst => batch */
-const volatile u64 batch_max_wait_ns = 60000000ULL; /* starvation guard */
-const volatile u64 lag_ns = 20000000ULL;	   /* max sleep credit */
-const volatile bool preempt_batch = true;
-const volatile u64 batch_min_run_ns = 1000000ULL; /* before preemptible */
-const volatile u32 nr_cpus = 1;
-
-/* Global state. Racy plain accesses are fine: these are heuristics. */
-u64 vtime_now;
-u64 batch_served_at;
-/* When the batch task on each CPU started running; 0 = not running batch. */
-u64 cpu_batch_since[MAX_CPUS];
-
-/* Exit info for the loader. */
-s32 exit_kind;
-char exit_reason[EXIT_MSG_LEN];
-char exit_msg[EXIT_MSG_LEN];
-
-struct task_ctx {
-	u64 vruntime;	/* weighted runtime, our fairness clock */
-	u64 avg_burst;	/* EWMA of runtime between sleeps */
-	u64 burst;	/* runtime since the task last slept */
-	u64 run_at;	/* when it last started running */
-	bool batch;
-};
-
-struct {
-	__uint(type, BPF_MAP_TYPE_TASK_STORAGE);
-	__uint(map_flags, BPF_F_NO_PREALLOC);
-	__type(key, int);
-	__type(value, struct task_ctx);
-} task_ctxs SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-	__uint(key_size, sizeof(u32));
-	__uint(value_size, sizeof(u64));
-	__uint(max_entries, DEVBOX_NR_STATS);
-} stats SEC(".maps");
-
-static __always_inline void stat_inc(u32 idx)
-{
-	u64 *cnt = bpf_map_lookup_elem(&stats, &idx);
-
-	if (cnt)
-		(*cnt)++;
-}
-
-static __always_inline struct task_ctx *lookup_tctx(struct task_struct *p)
-{
-	return bpf_task_storage_get(&task_ctxs, p, 0, 0);
-}
-
-static __always_inline u64 min64(u64 a, u64 b) { return a < b ? a : b; }
-static __always_inline u64 max64(u64 a, u64 b) { return a > b ? a : b; }
-
-static __always_inline bool vtime_before(u64 a, u64 b)
-{
-	return (s64)(a - b) < 0;
-}
-
-/* Inverse-weight scaling: nice 0 = 100, so heavier tasks are charged less. */
-static __always_inline u64 scale_inv(u64 v, struct task_struct *p)
-{
-	u32 w = p->scx.weight ? p->scx.weight : 100;
-
-	return v * 100 / w;
-}
-
-/* scdr writes slice_us through sched_setattr; that sets se.custom_slice. */
-static __always_inline bool has_latency_hint(struct task_struct *p)
-{
-	return p->se.custom_slice && p->se.slice < slice_ns * 2;
-}
-
-static __always_inline bool is_protected(struct task_struct *p)
-{
-	return (p->flags & PF_KTHREAD) || p->static_prio < NICE_0_PRIO ||
-	       has_latency_hint(p);
-}
-
 static bool classify_batch(struct task_struct *p, struct task_ctx *tctx)
 {
+	u64 thresh = batch_thresh_ns;
+	bool batch;
+
 	if (p->policy == SCHED_BATCH || p->policy == SCHED_IDLE)
 		return true;
-	if (is_protected(p))
+	if (p->flags & PF_KTHREAD)
 		return false;
+	if (is_favoured(p))
+		thresh *= hint_thresh_mult;
 	/* Hysteresis: leave batch only once bursts fall well below threshold. */
 	if (tctx->batch)
-		return tctx->avg_burst > batch_thresh_ns / 2;
-	return tctx->avg_burst > batch_thresh_ns;
+		thresh /= 2;
+	batch = tctx->avg_burst > thresh;
+	if (batch && is_favoured(p))
+		stat_inc(DST_HINT_DEMOTED);
+	return batch;
 }
 
 static u64 task_slice(struct task_struct *p, bool batch)
@@ -160,17 +71,17 @@ static u64 task_slice(struct task_struct *p, bool batch)
 	return max64(s, slice_min_ns);
 }
 
-/* Find a CPU running a batch task that @p may run on, preferring @prefer. */
 static __always_inline bool batch_preemptible(struct task_struct *p, u32 cpu,
 					      u64 now)
 {
-	u64 since = cpu_batch_since[cpu & (MAX_CPUS - 1)];
+	u64 since = cpu_batch_since[CPU_IDX(cpu)];
 
 	/* Let a batch task keep at least batch_min_run_ns: no thrashing. */
 	return since && now - since >= batch_min_run_ns &&
 	       bpf_cpumask_test_cpu(cpu, p->cpus_ptr);
 }
 
+/* Find a CPU running a batch task that @p may run on, preferring @prefer. */
 static s32 find_batch_cpu(struct task_struct *p, s32 prefer)
 {
 	u64 now = bpf_ktime_get_ns();
@@ -208,7 +119,8 @@ s32 BPF_STRUCT_OPS(devbox_select_cpu, struct task_struct *p, s32 prev_cpu,
 void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 {
 	struct task_ctx *tctx;
-	u64 vruntime, floor, deadline;
+	u64 vruntime, clock, deadline;
+	bool was_batch;
 	s32 cpu;
 
 	/*
@@ -227,15 +139,21 @@ void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 		return;
 	}
 
+	was_batch = tctx->batch;
 	tctx->batch = classify_batch(p, tctx);
 	if (has_latency_hint(p))
 		stat_inc(DST_HINTED);
 
-	/* Bound the credit a long sleeper can bring back. */
+	/*
+	 * Changing class means changing clocks: start level with the new one.
+	 * Otherwise bound the credit a long sleeper can bring back.
+	 */
+	clock = tctx->batch ? vtime_now[BATCH_DSQ] : vtime_now[INTERACTIVE_DSQ];
 	vruntime = tctx->vruntime;
-	floor = vtime_now - lag_ns;
-	if (vtime_before(vruntime, floor))
-		vruntime = floor;
+	if (tctx->batch != was_batch)
+		vruntime = clock;
+	else if (vtime_before(vruntime, clock - lag_ns))
+		vruntime = clock - lag_ns;
 	tctx->vruntime = vruntime;
 
 	/* Expected burst pushes the deadline out: short runners go first. */
@@ -243,7 +161,7 @@ void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 
 	if (tctx->batch) {
 		if (!scx_bpf_dsq_nr_queued(BATCH_DSQ))
-			batch_served_at = bpf_ktime_get_ns();
+			batch_nonempty_since = bpf_ktime_get_ns();
 		scx_bpf_dsq_insert_vtime(p, BATCH_DSQ, task_slice(p, true),
 					 deadline, enq_flags);
 		stat_inc(DST_BATCH);
@@ -264,7 +182,7 @@ void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 	if (preempt_batch && !tctx->batch) {
 		cpu = find_batch_cpu(p, scx_bpf_task_cpu(p));
 		if (cpu >= 0) {
-			cpu_batch_since[cpu & (MAX_CPUS - 1)] = 0;
+			cpu_batch_since[CPU_IDX(cpu)] = 0;
 			scx_bpf_kick_cpu(cpu, SCX_KICK_PREEMPT);
 			stat_inc(DST_PREEMPT_KICK);
 		}
@@ -274,21 +192,26 @@ void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 void BPF_STRUCT_OPS(devbox_dispatch, s32 cpu, struct task_struct *prev)
 {
 	u64 now = bpf_ktime_get_ns();
+	u32 idx = CPU_IDX(cpu);
+	u64 last = max64(cpu_batch_served[idx], batch_nonempty_since);
 
-	if (scx_bpf_dsq_nr_queued(BATCH_DSQ) &&
-	    now - batch_served_at > batch_max_wait_ns) {
-		if (scx_bpf_dsq_move_to_local(BATCH_DSQ)) {
-			batch_served_at = now;
-			stat_inc(DST_STARVE_RESCUE);
-			return;
-		}
+	/*
+	 * Starvation guard, per CPU: each CPU serves the batch queue at least
+	 * every batch_max_wait_ns, so N batch tasks wait about
+	 * N / nr_cpus * batch_max_wait_ns at worst, well inside the watchdog.
+	 */
+	if (now - last > batch_max_wait_ns && scx_bpf_dsq_nr_queued(BATCH_DSQ) &&
+	    scx_bpf_dsq_move_to_local(BATCH_DSQ)) {
+		cpu_batch_served[idx] = now;
+		stat_inc(DST_STARVE_RESCUE);
+		return;
 	}
 
 	if (scx_bpf_dsq_move_to_local(INTERACTIVE_DSQ))
 		return;
 
 	if (scx_bpf_dsq_move_to_local(BATCH_DSQ)) {
-		batch_served_at = now;
+		cpu_batch_served[idx] = now;
 		return;
 	}
 
@@ -296,40 +219,43 @@ void BPF_STRUCT_OPS(devbox_dispatch, s32 cpu, struct task_struct *prev)
 	if (prev && (prev->scx.flags & SCX_TASK_QUEUED)) {
 		struct task_ctx *tctx = lookup_tctx(prev);
 
-		prev->scx.slice = task_slice(prev, tctx ? tctx->batch : false);
+		scx_bpf_task_set_slice(prev, task_slice(prev, tctx ? tctx->batch : false));
 	}
 }
 
 void BPF_STRUCT_OPS(devbox_running, struct task_struct *p)
 {
 	struct task_ctx *tctx = lookup_tctx(p);
-	s32 cpu = scx_bpf_task_cpu(p);
+	u32 idx = CPU_IDX(scx_bpf_task_cpu(p));
 
 	if (!tctx)
 		return;
 	tctx->run_at = bpf_ktime_get_ns();
-	if (vtime_before(vtime_now, tctx->vruntime))
-		vtime_now = tctx->vruntime;
-	if (cpu >= 0 && cpu < MAX_CPUS)
-		cpu_batch_since[cpu & (MAX_CPUS - 1)] = tctx->batch ? tctx->run_at : 0;
-	if (tctx->batch)
-		batch_served_at = tctx->run_at;
+	if (tctx->batch) {
+		if (vtime_before(vtime_now[BATCH_DSQ], tctx->vruntime))
+			vtime_now[BATCH_DSQ] = tctx->vruntime;
+		cpu_batch_since[idx] = tctx->run_at;
+		cpu_batch_served[idx] = tctx->run_at;
+	} else {
+		if (vtime_before(vtime_now[INTERACTIVE_DSQ], tctx->vruntime))
+			vtime_now[INTERACTIVE_DSQ] = tctx->vruntime;
+		cpu_batch_since[idx] = 0;
+	}
 }
 
 void BPF_STRUCT_OPS(devbox_stopping, struct task_struct *p, bool runnable)
 {
 	struct task_ctx *tctx = lookup_tctx(p);
-	s32 cpu = scx_bpf_task_cpu(p);
 	u64 used;
 
-	if (cpu >= 0 && cpu < MAX_CPUS)
-		cpu_batch_since[cpu & (MAX_CPUS - 1)] = 0;
+	cpu_batch_since[CPU_IDX(scx_bpf_task_cpu(p))] = 0;
 	if (!tctx)
 		return;
 
 	used = bpf_ktime_get_ns() - tctx->run_at;
 	tctx->vruntime += scale_inv(used, p);
-	tctx->burst = min64(tctx->burst + used, 10 * batch_thresh_ns);
+	tctx->burst = min64(tctx->burst + used,
+			    4 * hint_thresh_mult * batch_thresh_ns);
 
 	/* A hog that never sleeps must still be recognised. */
 	if (runnable && tctx->burst > tctx->avg_burst)
@@ -352,7 +278,7 @@ void BPF_STRUCT_OPS(devbox_enable, struct task_struct *p)
 	struct task_ctx *tctx = lookup_tctx(p);
 
 	if (tctx)
-		tctx->vruntime = vtime_now;
+		tctx->vruntime = vtime_now[INTERACTIVE_DSQ];
 }
 
 s32 BPF_STRUCT_OPS(devbox_init_task, struct task_struct *p,
@@ -364,11 +290,24 @@ s32 BPF_STRUCT_OPS(devbox_init_task, struct task_struct *p,
 	return 0;
 }
 
+/*
+ * Implementing these keeps the scheduler loaded across CPU hotplug (suspend,
+ * SMT toggles); without them the kernel unloads it on the first event.
+ */
+void BPF_STRUCT_OPS(devbox_cpu_online, s32 cpu)
+{
+	cpu_batch_since[CPU_IDX(cpu)] = 0;
+}
+
+void BPF_STRUCT_OPS(devbox_cpu_offline, s32 cpu)
+{
+	cpu_batch_since[CPU_IDX(cpu)] = 0;
+}
+
 s32 BPF_STRUCT_OPS_SLEEPABLE(devbox_init)
 {
 	s32 ret;
 
-	batch_served_at = bpf_ktime_get_ns();
 	ret = scx_bpf_create_dsq(INTERACTIVE_DSQ, -1);
 	if (ret)
 		return ret;
@@ -379,6 +318,7 @@ void BPF_STRUCT_OPS(devbox_exit, struct scx_exit_info *ei)
 {
 	bpf_probe_read_kernel_str(exit_reason, sizeof(exit_reason), ei->reason);
 	bpf_probe_read_kernel_str(exit_msg, sizeof(exit_msg), ei->msg);
+	exit_code = ei->exit_code;
 	exit_kind = ei->kind;
 }
 
@@ -392,8 +332,10 @@ struct sched_ext_ops devbox_ops = {
 	.quiescent	= (void *)devbox_quiescent,
 	.enable		= (void *)devbox_enable,
 	.init_task	= (void *)devbox_init_task,
+	.cpu_online	= (void *)devbox_cpu_online,
+	.cpu_offline	= (void *)devbox_cpu_offline,
 	.init		= (void *)devbox_init,
 	.exit		= (void *)devbox_exit,
-	.timeout_ms	= 5000,
+	.timeout_ms	= 10000,
 	.name		= "devbox",
 };

@@ -4,7 +4,14 @@
  * briefly) while 2x nCPU processes spin, plus the spinners' throughput.
  * Compare schedulers by running it under each.
  *
- *   latbench [seconds=10] [hogs=2*nproc]
+ *   latbench [seconds=10] [hogs=2*nproc] [sleep|spawn]
+ *
+ * "spawn" measures what an agent's tool calls see instead: the time to
+ * fork, exec /bin/true and reap it, back to back.
+ *
+ * nice and scdr's slice hints are inherited, so start it as a transient
+ * service to get a clean nice-0 baseline rather than the caller's profile:
+ *   systemd-run --user --pipe --wait -q $PWD/latbench 8
  */
 #define _GNU_SOURCE
 #include <signal.h>
@@ -12,6 +19,7 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -34,6 +42,7 @@ int main(int argc, char **argv)
 {
 	int secs = argc > 1 ? atoi(argv[1]) : 10;
 	int hogs = argc > 2 ? atoi(argv[2]) : 2 * sysconf(_SC_NPROCESSORS_ONLN);
+	int spawn = argc > 3 && !strcmp(argv[3], "spawn");
 	volatile unsigned long long *work;
 	long long *lat, end;
 	size_t n = 0, cap = (size_t)secs * 2000;
@@ -62,6 +71,17 @@ int main(int argc, char **argv)
 		struct timespec req = { 0, 1000000 };
 		long long t0 = now_ns();
 
+		if (spawn) {
+			pid_t c = fork();
+
+			if (!c) {
+				execl("/bin/true", "true", (char *)NULL);
+				_exit(127);
+			}
+			waitpid(c, NULL, 0);
+			lat[n++] = now_ns() - t0;
+			continue;
+		}
 		nanosleep(&req, NULL);
 		lat[n++] = now_ns() - t0 - 1000000;
 		for (volatile int k = 0; k < 20000; k++)
@@ -76,8 +96,9 @@ int main(int argc, char **argv)
 		total += work[i];
 
 	qsort(lat, n, sizeof(*lat), cmp_ll);
-	printf("samples=%zu p50=%lldus p99=%lldus p99.9=%lldus max=%lldus "
-	       "hog_throughput=%.1fM/s\n", n, lat[n / 2] / 1000,
+	printf("%s samples=%zu p50=%lldus p99=%lldus p99.9=%lldus max=%lldus "
+	       "hog_throughput=%.1fM/s\n", spawn ? "spawn" : "sleep", n,
+	       lat[n / 2] / 1000,
 	       lat[n * 99 / 100] / 1000, lat[n * 999 / 1000] / 1000,
 	       lat[n - 1] / 1000, total / 1e6 / (secs + 0.5));
 	return 0;

@@ -16,11 +16,14 @@ typedef __u8 u8;
 typedef __u32 u32;
 typedef __s32 s32;
 typedef __u64 u64;
+typedef __s64 s64;
 #include <bpf/libbpf.h>
 #include "devbox.h"
 #include "devbox.bpf.skel.h"
 
-#define SCX_EXIT_ERROR 1024
+#define SCX_EXIT_UNREG 64
+#define SCX_EXIT_SYSRQ 67
+#define SCX_ECODE_ACT_RESTART (1ULL << 48)
 
 static volatile sig_atomic_t stop;
 static bool verbose;
@@ -34,6 +37,7 @@ static const char *stat_names[DEVBOX_NR_STATS] = {
 	[DST_PREEMPT_KICK]  = "preempt_batch",
 	[DST_IDLE_KICK]     = "idle_kick",
 	[DST_STARVE_RESCUE] = "starve_rescue",
+	[DST_HINT_DEMOTED]  = "hint_demoted",
 };
 
 static void usage(const char *prog)
@@ -48,6 +52,8 @@ static void usage(const char *prog)
 "  -m, --slice-min-us N      interactive slice floor under load (default 500)\n"
 "  -b, --batch-slice-us N    batch slice (default 12000)\n"
 "  -t, --batch-thresh-us N   avg burst above which a task is batch (default 8000)\n"
+"  -H, --hint-thresh-mult N  threshold multiplier for nice<0 / scdr-hinted tasks\n"
+"                            (default 4)\n"
 "  -w, --batch-max-wait-ms N serve batch at least this often (default 60)\n"
 "  -l, --lag-us N            max sleep credit (default 20000)\n"
 "  -p, --batch-min-run-us N  batch runs this long before it can be preempted\n"
@@ -124,88 +130,77 @@ static void check_sched_ext_state(void)
 	fclose(f);
 }
 
-int main(int argc, char **argv)
+enum run_result { RUN_STOPPED, RUN_FAILED, RUN_RESTART };
+
+static bool wait_sched_ext_disabled(void)
 {
-	static const struct option opts[] = {
-		{ "slice-us",          required_argument, 0, 's' },
-		{ "slice-min-us",      required_argument, 0, 'm' },
-		{ "batch-slice-us",    required_argument, 0, 'b' },
-		{ "batch-thresh-us",   required_argument, 0, 't' },
-		{ "batch-max-wait-ms", required_argument, 0, 'w' },
-		{ "lag-us",            required_argument, 0, 'l' },
-		{ "batch-min-run-us",  required_argument, 0, 'p' },
-		{ "no-preempt",        no_argument,       0, 'n' },
-		{ "stats",             required_argument, 0, 'i' },
-		{ "verbose",           no_argument,       0, 'v' },
-		{ "help",              no_argument,       0, 'h' },
-		{ 0 }
-	};
+	for (int i = 0; i < 50; i++) {
+		char buf[32] = "";
+		FILE *f = fopen("/sys/kernel/sched_ext/state", "r");
+
+		if (f) {
+			if (!fgets(buf, sizeof(buf), f))
+				buf[0] = 0;
+			fclose(f);
+		}
+		if (!strncmp(buf, "disabled", 8))
+			return true;
+		usleep(100000);
+	}
+	return false;
+}
+
+static long long read_hotplug_seq(void)
+{
+	long long seq = 0;
+	FILE *f = fopen("/sys/kernel/sched_ext/hotplug_seq", "r");
+
+	if (f) {
+		if (fscanf(f, "%lld", &seq) != 1)
+			seq = 0;
+		fclose(f);
+	}
+	return seq;
+}
+
+/* Loads and attaches the scheduler, then waits until it stops. */
+static enum run_result run(const struct scx_devbox__rodata *cfg, int ncpu,
+			   unsigned int stats_secs)
+{
 	unsigned long long prev[DEVBOX_NR_STATS] = { 0 }, cur[DEVBOX_NR_STATS];
-	unsigned int stats_secs = 0, ticks = 0;
+	unsigned int ticks = 0;
 	struct scx_devbox *skel;
 	struct bpf_link *link;
-	int ncpu, opt, ret = 0;
-
-	libbpf_set_print(libbpf_print);
+	enum run_result ret = RUN_STOPPED;
+	s32 kind;
 
 	skel = scx_devbox__open();
 	if (!skel) {
 		fprintf(stderr, "failed to open BPF skeleton\n");
-		return 1;
+		return RUN_FAILED;
 	}
-
-	while ((opt = getopt_long(argc, argv, "s:m:b:t:w:l:p:ni:vh", opts,
-				  NULL)) != -1) {
-		switch (opt) {
-		case 's': skel->rodata->slice_ns = parse_ull(optarg, "slice") * 1000; break;
-		case 'm': skel->rodata->slice_min_ns = parse_ull(optarg, "slice-min") * 1000; break;
-		case 'b': skel->rodata->batch_slice_ns = parse_ull(optarg, "batch-slice") * 1000; break;
-		case 't': skel->rodata->batch_thresh_ns = parse_ull(optarg, "batch-thresh") * 1000; break;
-		case 'w': skel->rodata->batch_max_wait_ns = parse_ull(optarg, "batch-max-wait") * 1000000; break;
-		case 'l': skel->rodata->lag_ns = parse_ull(optarg, "lag") * 1000; break;
-		case 'p': skel->rodata->batch_min_run_ns = parse_ull(optarg, "batch-min-run") * 1000; break;
-		case 'n': skel->rodata->preempt_batch = false; break;
-		case 'i': stats_secs = parse_ull(optarg, "stats"); break;
-		case 'v': verbose = true; break;
-		case 'h': usage(argv[0]); return 0;
-		default:  usage(argv[0]); return 2;
-		}
-	}
-	if (skel->rodata->slice_min_ns > skel->rodata->slice_ns ||
-	    !skel->rodata->slice_ns || !skel->rodata->batch_thresh_ns) {
-		fprintf(stderr, "slices must be non-zero and slice-min <= slice\n");
-		return 2;
-	}
-
-	check_sched_ext_state();
-
-	ncpu = libbpf_num_possible_cpus();
-	if (ncpu <= 0) {
-		fprintf(stderr, "can't count CPUs\n");
-		return 1;
-	}
+	*skel->rodata = *cfg;
 	skel->rodata->nr_cpus = ncpu;
+	/* Lets the kernel refuse us if a CPU came or went while loading. */
+	skel->struct_ops.devbox_ops->hotplug_seq = read_hotplug_seq();
 
 	if (scx_devbox__load(skel)) {
 		fprintf(stderr, "failed to load BPF programs (run with -v)\n");
 		scx_devbox__destroy(skel);
-		return 1;
+		return RUN_FAILED;
 	}
-
 	link = bpf_map__attach_struct_ops(skel->maps.devbox_ops);
 	if (!link) {
-		fprintf(stderr, "failed to attach scheduler: %s\n",
-			strerror(errno));
+		fprintf(stderr, "failed to attach scheduler: %s\n", strerror(errno));
 		scx_devbox__destroy(skel);
-		return 1;
+		return errno == EBUSY ? RUN_RESTART : RUN_FAILED;
 	}
 
-	signal(SIGINT, on_signal);
-	signal(SIGTERM, on_signal);
 	printf("scx_devbox running on %d CPUs (slice %llu us, batch %llu us, "
 	       "batch threshold %llu us)\n", ncpu,
-	       skel->rodata->slice_ns / 1000, skel->rodata->batch_slice_ns / 1000,
-	       skel->rodata->batch_thresh_ns / 1000);
+	       (unsigned long long)cfg->slice_ns / 1000,
+	       (unsigned long long)cfg->batch_slice_ns / 1000,
+	       (unsigned long long)cfg->batch_thresh_ns / 1000);
 	fflush(stdout);
 
 	while (!stop && !skel->bss->exit_kind) {
@@ -223,14 +218,101 @@ int main(int argc, char **argv)
 
 	bpf_link__destroy(link);
 
-	if (skel->bss->exit_kind) {
-		fprintf(stderr, "scheduler exited (kind %d): %s%s%s\n",
-			skel->bss->exit_kind, skel->bss->exit_reason,
-			skel->bss->exit_msg[0] ? ": " : "",
+	kind = skel->bss->exit_kind;
+	if (kind && !(stop && kind == SCX_EXIT_UNREG)) {
+		fprintf(stderr, "scheduler exited (kind %d, code %#llx): %s%s%s\n",
+			kind, (unsigned long long)skel->bss->exit_code,
+			skel->bss->exit_reason, skel->bss->exit_msg[0] ? ": " : "",
 			skel->bss->exit_msg);
-		if (skel->bss->exit_kind >= SCX_EXIT_ERROR)
-			ret = 1;
+		if ((unsigned long long)skel->bss->exit_code & SCX_ECODE_ACT_RESTART)
+			ret = RUN_RESTART;
+		else if (kind != SCX_EXIT_SYSRQ)
+			/* Unloaded without being asked: let systemd restart us. */
+			ret = RUN_FAILED;
 	}
 	scx_devbox__destroy(skel);
 	return ret;
+}
+
+int main(int argc, char **argv)
+{
+	static const struct option opts[] = {
+		{ "slice-us",          required_argument, 0, 's' },
+		{ "slice-min-us",      required_argument, 0, 'm' },
+		{ "batch-slice-us",    required_argument, 0, 'b' },
+		{ "batch-thresh-us",   required_argument, 0, 't' },
+		{ "hint-thresh-mult",  required_argument, 0, 'H' },
+		{ "batch-max-wait-ms", required_argument, 0, 'w' },
+		{ "lag-us",            required_argument, 0, 'l' },
+		{ "batch-min-run-us",  required_argument, 0, 'p' },
+		{ "no-preempt",        no_argument,       0, 'n' },
+		{ "stats",             required_argument, 0, 'i' },
+		{ "verbose",           no_argument,       0, 'v' },
+		{ "help",              no_argument,       0, 'h' },
+		{ 0 }
+	};
+	struct scx_devbox__rodata cfg;
+	struct scx_devbox *skel;
+	unsigned int stats_secs = 0, restarts = 0;
+	enum run_result res;
+	int ncpu, opt;
+
+	libbpf_set_print(libbpf_print);
+
+	/* The BPF object's initial rodata holds the defaults. */
+	skel = scx_devbox__open();
+	if (!skel) {
+		fprintf(stderr, "failed to open BPF skeleton\n");
+		return 1;
+	}
+	cfg = *skel->rodata;
+	scx_devbox__destroy(skel);
+
+	while ((opt = getopt_long(argc, argv, "s:m:b:t:H:w:l:p:ni:vh", opts,
+				  NULL)) != -1) {
+		switch (opt) {
+		case 's': cfg.slice_ns = parse_ull(optarg, "slice") * 1000; break;
+		case 'm': cfg.slice_min_ns = parse_ull(optarg, "slice-min") * 1000; break;
+		case 'b': cfg.batch_slice_ns = parse_ull(optarg, "batch-slice") * 1000; break;
+		case 't': cfg.batch_thresh_ns = parse_ull(optarg, "batch-thresh") * 1000; break;
+		case 'H': cfg.hint_thresh_mult = parse_ull(optarg, "hint-thresh-mult"); break;
+		case 'w': cfg.batch_max_wait_ns = parse_ull(optarg, "batch-max-wait") * 1000000; break;
+		case 'l': cfg.lag_ns = parse_ull(optarg, "lag") * 1000; break;
+		case 'p': cfg.batch_min_run_ns = parse_ull(optarg, "batch-min-run") * 1000; break;
+		case 'n': cfg.preempt_batch = false; break;
+		case 'i': stats_secs = parse_ull(optarg, "stats"); break;
+		case 'v': verbose = true; break;
+		case 'h': usage(argv[0]); return 0;
+		default:  usage(argv[0]); return 2;
+		}
+	}
+	if (cfg.slice_min_ns > cfg.slice_ns || !cfg.slice_ns ||
+	    !cfg.batch_thresh_ns || !cfg.hint_thresh_mult) {
+		fprintf(stderr, "slices, threshold and multiplier must be non-zero "
+			"and slice-min <= slice\n");
+		return 2;
+	}
+
+	check_sched_ext_state();
+
+	ncpu = libbpf_num_possible_cpus();
+	if (ncpu <= 0) {
+		fprintf(stderr, "can't count CPUs\n");
+		return 1;
+	}
+
+	signal(SIGINT, on_signal);
+	signal(SIGTERM, on_signal);
+
+	/* The kernel asks for a restart e.g. when CPUs change mid-load. */
+	while ((res = run(&cfg, ncpu, stats_secs)) == RUN_RESTART && !stop) {
+		if (++restarts > 10) {
+			fprintf(stderr, "giving up after %u restarts\n", restarts - 1);
+			return 1;
+		}
+		fprintf(stderr, "restarting scheduler\n");
+		if (!wait_sched_ext_disabled())
+			return 1;
+	}
+	return res == RUN_FAILED ? 1 : 0;
 }
