@@ -15,11 +15,13 @@ mod hyprland;
 mod kwin;
 mod niri;
 mod pipewire;
+mod push;
 
 use crate::dbus::Daemon1Proxy;
 use futures_util::StreamExt;
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::Notify;
 
@@ -79,7 +81,7 @@ pub async fn run() -> anyhow::Result<()> {
         .await?;
     let system = zbus::Connection::system().await?;
 
-    let kwin_loaded = start_foreground(&session, &shared).await;
+    let kwin_path = start_foreground(&session, &shared).await;
     tokio::spawn({
         let (session, shared) = (session.clone(), shared.clone());
         async move {
@@ -98,20 +100,30 @@ pub async fn run() -> anyhow::Result<()> {
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
 
-    let mut sent = State::default();
-    push(&daemon, &shared.snapshot(), &mut sent, true).await;
+    let mut pusher = Pusher::default();
+    pusher.push(&daemon, &shared.snapshot()).await;
     loop {
+        // Retry unsent fields soon, but only while something is outstanding.
+        let retry = async {
+            if pusher.pending(&shared.snapshot()) {
+                tokio::time::sleep(PUSH_RETRY).await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        };
         tokio::select! {
-            _ = shared.changed.notified() => push(&daemon, &shared.snapshot(), &mut sent, false).await,
+            _ = shared.changed.notified() => pusher.push(&daemon, &shared.snapshot()).await,
+            _ = retry => pusher.push(&daemon, &shared.snapshot()).await,
             Some(_) = daemon_restarts.next() => {
                 tracing::info!("scdrd (re)appeared; re-sending session state");
-                push(&daemon, &shared.snapshot(), &mut sent, true).await;
+                pusher.sent = push::Sent::default();
+                pusher.push(&daemon, &shared.snapshot()).await;
             }
             _ = term.recv() => break,
             _ = int.recv() => break,
         }
     }
-    if kwin_loaded {
+    if kwin_path {
         kwin::unload(&session).await;
     }
     Ok(())
@@ -120,7 +132,7 @@ pub async fn run() -> anyhow::Result<()> {
 pub const GNOME_EXTENSION: &str = "scdr-foreground@scdr";
 
 /// Picks how to learn the focused window for this desktop. Returns whether
-/// a KWin script was loaded (to unload on exit).
+/// the KWin path was chosen (so the script is unloaded on exit).
 async fn start_foreground(session: &zbus::Connection, shared: &Shared) -> bool {
     let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
     let spawn = |name: &'static str, fut: std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>>| {
@@ -143,36 +155,69 @@ async fn start_foreground(session: &zbus::Connection, shared: &Shared) -> bool {
         );
         false
     } else {
-        match kwin::load(session).await {
-            Ok(()) => {
-                tracing::info!("following focus through a KWin script");
-                true
+        tracing::info!("following focus through a KWin script (loaded whenever KWin is on the bus)");
+        let session = session.clone();
+        tokio::spawn(async move {
+            if let Err(e) = kwin::watch(session).await {
+                tracing::warn!("KWin script watcher stopped: {e:#}");
             }
-            Err(e) => {
-                tracing::warn!("no foreground tracking on {desktop:?}: {e:#}");
-                false
-            }
-        }
+        });
+        true
     }
 }
 
-/// Sends what changed since `sent` (everything with `all`).
-async fn push(daemon: &Daemon1Proxy<'_>, now: &State, sent: &mut State, all: bool) {
-    let log = |what: &str, r: zbus::Result<()>| {
-        if let Err(e) = r {
-            tracing::debug!("{what}: {e}");
+const PUSH_RETRY: Duration = Duration::from_secs(5);
+
+/// Pushes state to scdrd and remembers what it accepted.
+#[derive(Default)]
+struct Pusher {
+    sent: push::Sent,
+    failing: bool,
+}
+
+impl Pusher {
+    fn pending(&self, now: &State) -> bool {
+        !push::plan(now, &self.sent).is_empty()
+    }
+
+    /// Sends what scdrd hasn't acknowledged; a failed call stays pending.
+    async fn push(&mut self, daemon: &Daemon1Proxy<'_>, now: &State) {
+        let plan = push::plan(now, &self.sent);
+        if plan.is_empty() {
+            return;
         }
-    };
-    if let Some(pid) = now.foreground.filter(|_| all || now.foreground != sent.foreground) {
-        log("SetForeground", daemon.set_foreground(pid).await);
+        let mut errors = Vec::new();
+        if let Some(pid) = plan.foreground {
+            match daemon.set_foreground(pid).await {
+                Ok(()) => self.sent.mark_foreground(pid),
+                Err(e) => errors.push(format!("SetForeground: {e}")),
+            }
+        }
+        if let Some(pids) = &plan.audio {
+            match daemon.set_audio_clients(pids).await {
+                Ok(()) => self.sent.mark_audio(pids),
+                Err(e) => errors.push(format!("SetAudioClients: {e}")),
+            }
+        }
+        if let Some(pids) = &plan.games {
+            match daemon.set_games(pids).await {
+                Ok(()) => self.sent.mark_games(pids),
+                Err(e) => errors.push(format!("SetGames: {e}")),
+            }
+        }
+        if errors.is_empty() {
+            if self.failing {
+                tracing::info!("session state delivered to scdrd again");
+            }
+            self.failing = false;
+        } else {
+            let msg = errors.join("; ");
+            if self.failing {
+                tracing::debug!("still failing: {msg}");
+            } else {
+                tracing::warn!("could not update scdrd, retrying every {PUSH_RETRY:?}: {msg}");
+            }
+            self.failing = true;
+        }
     }
-    if all || now.audio != sent.audio {
-        let pids: Vec<u32> = now.audio.iter().copied().collect();
-        log("SetAudioClients", daemon.set_audio_clients(&pids).await);
-    }
-    if all || now.games != sent.games {
-        let pids: Vec<u32> = now.games.iter().copied().collect();
-        log("SetGames", daemon.set_games(&pids).await);
-    }
-    *sent = now.clone();
 }
