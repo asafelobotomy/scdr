@@ -63,7 +63,9 @@ impl Policy {
                 if let (Some(bus), false) = (bus, enabled) {
                     self.restore_scx(bus).await;
                 }
-                crate::system::sched_ext().is_some_and(|s| s.is_active())
+                let kernel = crate::system::sched_ext();
+                report.extend(external_scheduler(&SchedChoice::Eevdf, kernel.as_ref()));
+                kernel.is_some_and(|s| s.is_active())
             }
         };
         // EEVDF knobs only matter while no sched_ext scheduler runs.
@@ -88,6 +90,11 @@ impl Policy {
         let Ok(current) = current(&loader).await else {
             return "sched_ext: can't read scx_loader state".into();
         };
+        // A scheduler scx_loader didn't start (e.g. scx_devbox from its own
+        // unit): scx_loader reports none, but switching would fight it.
+        if let Some(line) = external_scheduler(&current, crate::system::sched_ext().as_ref()) {
+            return line;
+        }
         self.scx_original.get_or_insert_with(|| current.clone());
 
         if self.scx_applied.as_ref().is_some_and(|a| *a != current) {
@@ -118,7 +125,13 @@ impl Policy {
             return;
         };
         let Ok(loader) = loader(bus).await else { return };
-        if current(&loader).await.ok().as_ref() == Some(&applied) && applied != original {
+        let now = current(&loader).await.ok();
+        // Never start one over a scheduler someone else loaded meanwhile.
+        if let Some(line) = now.as_ref().and_then(|c| external_scheduler(c, crate::system::sched_ext().as_ref())) {
+            tracing::info!("not restoring {original}: {line}");
+            return;
+        }
+        if now.as_ref() == Some(&applied) && applied != original {
             match switch(&loader, &original).await {
                 Ok(()) => tracing::info!("sched_ext: restored {original}"),
                 Err(e) => tracing::warn!("sched_ext: can't restore {original}: {e}"),
@@ -223,6 +236,17 @@ async fn switch(loader: &LoaderProxy<'_>, to: &SchedChoice) -> zbus::Result<()> 
     }
 }
 
+/// Status line for a sched_ext scheduler the kernel runs while scx_loader
+/// (`loader`) reports none, i.e. one started outside scdr and scx_loader.
+fn external_scheduler(loader: &SchedChoice, kernel: Option<&crate::system::SchedExt>) -> Option<String> {
+    let kernel = kernel.filter(|k| k.is_active())?;
+    if *loader != SchedChoice::Eevdf {
+        return None;
+    }
+    let name = kernel.ops.as_deref().unwrap_or("unknown");
+    Some(format!("sched_ext: {name} (started outside scdr; left alone)"))
+}
+
 fn read_eevdf() -> Option<Eevdf> {
     let slice = fs::read_to_string(BASE_SLICE).ok()?;
     let preempt = fs::read_to_string(PREEMPT).ok();
@@ -258,5 +282,25 @@ mod tests {
     fn parses_preempt_mode() {
         assert_eq!(super::active_preempt("none voluntary (full) lazy\n").as_deref(), Some("full"));
         assert_eq!(super::active_preempt("none"), None);
+    }
+
+    #[test]
+    fn reports_scheduler_started_outside_scx_loader() {
+        use super::{SchedChoice, external_scheduler};
+        use crate::system::SchedExt;
+        let ext = |state: &str, ops: Option<&str>| SchedExt {
+            state: state.into(),
+            ops: ops.map(Into::into),
+        };
+        let devbox = ext("enabled", Some("devbox"));
+        assert_eq!(
+            external_scheduler(&SchedChoice::Eevdf, Some(&devbox)).as_deref(),
+            Some("sched_ext: devbox (started outside scdr; left alone)")
+        );
+        // scx_loader's own scheduler, nothing loaded, or no sched_ext kernel.
+        let bpfland = SchedChoice::Ext { name: "scx_bpfland".into(), mode: 0 };
+        assert_eq!(external_scheduler(&bpfland, Some(&devbox)), None);
+        assert_eq!(external_scheduler(&SchedChoice::Eevdf, Some(&ext("disabled", None))), None);
+        assert_eq!(external_scheduler(&SchedChoice::Eevdf, None), None);
     }
 }
