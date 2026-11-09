@@ -26,6 +26,7 @@ loads sched_ext schedulers with a GPL-compatible license.
 | **Batch DSQ** | Served only when the interactive DSQ is empty; 12 ms slices for cache-friendly throughput. A per-CPU starvation guard has each CPU serve it at least every 60 ms. |
 | **Two vtime clocks** | Interactive and batch tasks keep separate virtual clocks, so a nice-15 compiler racing ahead doesn't wipe out the interactive tasks' fairness history. |
 | **Batch preemption** | An interactive wakeup that finds no idle CPU preempts a CPU running a batch task, once that task has had ≥1 ms (no thrashing). |
+| **cgroup weights** | `cpu.weight` is honoured. Each cgroup keeps a flattened factor (product of weight/100 down from the root, fixed point); a task is charged vruntime and deadline at nice weight × cgroup factor, clamped to 1–10000, so weight 1 is deprioritised but never starved. |
 | **Per-CPU kthreads** | Dispatched straight to their CPU. |
 | **Idle CPU pick** | The kernel default: SMT-aware, prefers the previous CPU, keeps migrations low. |
 | **CPU hotplug** | Handled, so suspend/resume and CPUs going offline don't unload it. If the kernel unloads it anyway, the loader restarts it in place when the kernel asks, or exits non-zero so systemd does. |
@@ -41,6 +42,7 @@ changes and your scdr rules keep meaning the same thing:
 | `slice_us` (`audio`, `compositor`, `foreground`, `game`) | used as the task's slice; needs 4× the burst to be demoted to batch |
 | `nice` < 0 (`desktop`, `compositor`, …) | needs 4× the burst to be demoted to batch |
 | `nice` (any) | weights vruntime: nice 15 accrues it much faster |
+| `cpu_weight` (`CPUWeight=` on units: compositor/audio 400, focused app 300, desktop 200, background 50, `background.slice` 30, baloo 1) | honoured: multiplies the task's weight, so a weight-400 unit accrues vruntime 4x slower than a default one |
 
 Tasks no rule covers are classified by behaviour: an average run burst between
 sleeps above 8 ms (with hysteresis) makes a task batch. Favoured tasks (nice < 0
@@ -49,6 +51,12 @@ focused app, so when that app is Claude Desktop it also covers every node,
 qemu or test runner the agent starts, and those must not compete as
 interactive. Kernel threads are never demoted, which keeps reclaim (kswapd)
 moving under memory pressure.
+
+cgroup weights are an approximation of the kernel's hierarchical split. A
+cgroup's factor is computed from its parent's when it is created; changing a
+cgroup's weight later updates that cgroup only, not descendants that already
+exist, and weights count against the default 100 rather than against siblings.
+scdr sets weights on leaf-ish units, where this makes no difference.
 
 scdr's own `[sched_ext]` switching goes through scx_loader, which only knows
 the stock schedulers. Leave it off (the default) while scx_devbox runs; scdr's
@@ -125,4 +133,5 @@ system is already back on EEVDF; the unit retries 3 times and then stays there.
 Stats: `direct_idle` (woke onto an idle CPU), `interactive` / `batch`
 (enqueues per DSQ), `scdr_hint` (enqueues carrying an scdr slice),
 `preempt_batch`, `idle_kick`, `starve_rescue`, `hint_demoted` (enqueues of a
-favoured task demoted to batch as a hog).
+favoured task demoted to batch as a hog), `cgroup_weighted` (enqueues of
+tasks in a cgroup whose factor is not 1.0).

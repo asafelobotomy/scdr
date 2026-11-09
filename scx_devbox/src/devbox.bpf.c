@@ -23,6 +23,8 @@
  *     kthreads are never demoted.
  *   - scdr's per-profile slice_us (sched_attr custom slice) is honoured as
  *     the task's time slice and marks it latency-sensitive.
+ *   - cgroup cpu.weight is honoured: a task is charged vruntime at its nice
+ *     weight times its cgroup's flattened weight (devbox.cgroup.h).
  *   - An interactive wakeup with no idle CPU preempts a batch task that has
  *     run at least batch_min_run_ns. Idle CPUs: kernel default pick.
  */
@@ -32,6 +34,7 @@
 #include <bpf/bpf_core_read.h>
 #include "devbox.h"
 #include "devbox.bpf.h"
+#include "devbox.cgroup.h"
 
 char _license[] SEC("license") = "GPL";
 
@@ -120,6 +123,7 @@ void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 {
 	struct task_ctx *tctx;
 	u64 vruntime, clock, deadline;
+	u32 weight;
 	bool was_batch;
 	s32 cpu;
 
@@ -156,8 +160,12 @@ void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 		vruntime = clock - lag_ns;
 	tctx->vruntime = vruntime;
 
+	weight = eff_weight(p, tctx);
+	if (tctx->cgw != CGW_ONE)
+		stat_inc(DST_CGROUP_WEIGHTED);
+
 	/* Expected burst pushes the deadline out: short runners go first. */
-	deadline = vruntime + scale_inv(min64(tctx->avg_burst, lag_ns), p);
+	deadline = vruntime + scale_inv(min64(tctx->avg_burst, lag_ns), weight);
 
 	if (tctx->batch) {
 		if (!scx_bpf_dsq_nr_queued(BATCH_DSQ))
@@ -253,7 +261,7 @@ void BPF_STRUCT_OPS(devbox_stopping, struct task_struct *p, bool runnable)
 		return;
 
 	used = bpf_ktime_get_ns() - tctx->run_at;
-	tctx->vruntime += scale_inv(used, p);
+	tctx->vruntime += scale_inv(used, eff_weight(p, tctx));
 	tctx->burst = min64(tctx->burst + used,
 			    4 * hint_thresh_mult * batch_thresh_ns);
 
@@ -284,9 +292,14 @@ void BPF_STRUCT_OPS(devbox_enable, struct task_struct *p)
 s32 BPF_STRUCT_OPS(devbox_init_task, struct task_struct *p,
 		   struct scx_init_task_args *args)
 {
-	if (!bpf_task_storage_get(&task_ctxs, p, 0,
-				  BPF_LOCAL_STORAGE_GET_F_CREATE))
+	struct task_ctx *tctx;
+
+	tctx = bpf_task_storage_get(&task_ctxs, p, 0,
+				    BPF_LOCAL_STORAGE_GET_F_CREATE);
+	if (!tctx)
 		return -12; /* -ENOMEM */
+	tctx->cgw = args->cgroup ? cgrp_factor(args->cgroup) : CGW_ONE;
+	tctx->cgw_gen = cgw_gen;
 	return 0;
 }
 
@@ -332,6 +345,9 @@ struct sched_ext_ops devbox_ops = {
 	.quiescent	= (void *)devbox_quiescent,
 	.enable		= (void *)devbox_enable,
 	.init_task	= (void *)devbox_init_task,
+	.cgroup_init	= (void *)devbox_cgroup_init,
+	.cgroup_set_weight = (void *)devbox_cgroup_set_weight,
+	.cgroup_move	= (void *)devbox_cgroup_move,
 	.cpu_online	= (void *)devbox_cpu_online,
 	.cpu_offline	= (void *)devbox_cpu_offline,
 	.init		= (void *)devbox_init,

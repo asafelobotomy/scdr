@@ -53,6 +53,8 @@ struct task_ctx {
 	u64 avg_burst;	/* EWMA of runtime between sleeps */
 	u64 burst;	/* runtime since the task last slept */
 	u64 run_at;	/* when it last started running */
+	u32 cgw;	/* cached cgroup factor, CGW_ONE = 1.0 (see devbox.cgroup.h) */
+	u32 cgw_gen;	/* cgw_gen value cgw was computed under */
 	bool batch;
 };
 
@@ -91,11 +93,9 @@ static __always_inline bool vtime_before(u64 a, u64 b)
 	return (s64)(a - b) < 0;
 }
 
-/* Inverse-weight scaling: nice 0 = 100, so heavier tasks are charged less. */
-static __always_inline u64 scale_inv(u64 v, struct task_struct *p)
+/* Inverse-weight scaling: weight 100 = 1.0, so heavier tasks are charged less. */
+static __always_inline u64 scale_inv(u64 v, u32 w)
 {
-	u32 w = p->scx.weight ? p->scx.weight : 100;
-
 	return v * 100 / w;
 }
 

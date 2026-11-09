@@ -25,7 +25,7 @@ $(BUILD):
 $(BUILD)/vmlinux.h: | $(BUILD)
 	$(BPFTOOL) btf dump file /sys/kernel/btf/vmlinux format c > $@
 
-$(BUILD)/devbox.bpf.o: src/devbox.bpf.c src/devbox.bpf.h src/devbox.h $(BUILD)/vmlinux.h
+$(BUILD)/devbox.bpf.o: src/devbox.bpf.c src/devbox.bpf.h src/devbox.cgroup.h src/devbox.h $(BUILD)/vmlinux.h
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
 
 $(BUILD)/devbox.bpf.skel.h: $(BUILD)/devbox.bpf.o
