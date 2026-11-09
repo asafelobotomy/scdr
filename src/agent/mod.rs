@@ -108,9 +108,9 @@ impl Session1 {
 
 pub async fn run() -> anyhow::Result<()> {
     let shared = Shared::default();
-    let session = zbus::connection::Builder::session()?
-        .name(SESSION_NAME)?
-        .serve_at(SESSION_PATH, Session1 { shared: shared.clone() })?
+    let session = zbus::connection::Builder::session()
+        .name(SESSION_NAME)
+        .serve_at(SESSION_PATH, Session1 { shared: shared.clone() })
         .build()
         .await?;
     let system = zbus::Connection::system().await?;

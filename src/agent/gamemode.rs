@@ -5,7 +5,7 @@
 use super::Shared;
 use futures_util::StreamExt;
 use zbus::names::BusName;
-use zbus::zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 
 const SERVICE: &str = "com.feralinteractive.GameMode";
 

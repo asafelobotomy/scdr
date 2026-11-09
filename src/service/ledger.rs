@@ -47,10 +47,15 @@ impl Ledger {
     }
 }
 
+/// This boot's id: read once, it can't change while scdr runs.
 fn boot_id() -> String {
-    fs::read_to_string("/proc/sys/kernel/random/boot_id")
-        .map(|s| s.trim().to_owned())
-        .unwrap_or_default()
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| {
+        fs::read_to_string("/proc/sys/kernel/random/boot_id")
+            .map(|s| s.trim().to_owned())
+            .unwrap_or_default()
+    })
+    .clone()
 }
 
 impl Service {
@@ -98,8 +103,10 @@ impl Service {
         }
         let ledger = self.ledger();
         if ledger.is_empty() {
-            if self.ledger_written.take().is_some() || path.exists() {
+            // `Some("")`: known to be gone, so the tick doesn't stat it again.
+            if self.ledger_written.as_deref() != Some("") {
                 let _ = fs::remove_file(&path);
+                self.ledger_written = Some(String::new());
             }
             return;
         }
