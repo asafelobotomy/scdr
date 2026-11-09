@@ -1,0 +1,145 @@
+name: Release
+
+# Pushing a tag vX.Y.Z (matching Cargo.toml and packaging/aur/scdr/PKGBUILD)
+# runs clippy and the tests, uploads a source archive (git archive of the tag)
+# with its checksum, builds the AUR package from that archive, and publishes a
+# GitHub Release. Nothing is pushed to the AUR: the `aur` artifact holds the
+# PKGBUILD with the real checksum and its .SRCINFO, for you to push by hand
+# (packaging/aur/README.md).
+
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Install build tools
+        # git before checkout, so actions/checkout makes a real repository for git archive.
+        run: pacman -Syu --noconfirm --needed base-devel git rust
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Check the tag matches the version
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::Tag $TAG does not match Cargo.toml version $version (want v$version)."
+            exit 1
+          fi
+          pkgver=$(sed -n 's/^pkgver=//p' packaging/aur/scdr/PKGBUILD)
+          if [ "$pkgver" != "$version" ]; then
+            echo "::error::packaging/aur/scdr/PKGBUILD pkgver $pkgver does not match $version."
+            exit 1
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+      - name: Clippy and tests
+        run: |
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+
+      - name: Create the source archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir dist
+          git archive --format=tar.gz --prefix="scdr-$VERSION/" -o "dist/scdr-$VERSION.tar.gz" HEAD
+          (cd dist && sha256sum "scdr-$VERSION.tar.gz" >"scdr-$VERSION.tar.gz.sha256")
+          cat "dist/scdr-$VERSION.tar.gz.sha256"
+
+      # makepkg refuses to run as root. The AUR PKGBUILD builds from the
+      # archive above (placed next to it, so makepkg doesn't download it).
+      - name: Build the AUR package from the archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          sum=$(cut -d' ' -f1 "dist/scdr-$VERSION.tar.gz.sha256")
+          mkdir -p aur/scdr
+          sed "s|^sha256sums=('SKIP')$|sha256sums=('$sum')|" packaging/aur/scdr/PKGBUILD >aur/scdr/PKGBUILD
+          grep -q "^sha256sums=('$sum')$" aur/scdr/PKGBUILD
+          cp packaging/aur/scdr/scdr.install aur/scdr/
+          useradd -m builder
+          mkdir -p build && cp aur/scdr/* "dist/scdr-$VERSION.tar.gz" build/
+          chown -R builder:builder aur build
+          su builder -c "set -e
+            cd '$GITHUB_WORKSPACE/aur/scdr' && makepkg --printsrcinfo >.SRCINFO
+            cd '$GITHUB_WORKSPACE/build' && makepkg --nodeps --nocheck --noconfirm"
+          ls -l build/*.pkg.tar.zst
+
+      - name: Write the release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          sum=$(cut -d' ' -f1 "dist/scdr-$VERSION.tar.gz.sha256")
+          {
+            echo "scdr $VERSION."
+            echo
+            echo "- \`scdr-$VERSION.tar.gz\` (the AUR source): sha256 \`$sum\`"
+          } >notes.md
+          {
+            echo "## AUR update for $VERSION"
+            echo
+            echo '```'
+            cat aur/scdr/PKGBUILD
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release
+          if-no-files-found: error
+          path: |
+            notes.md
+            dist/scdr-*.tar.gz
+            dist/scdr-*.tar.gz.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aur
+          if-no-files-found: error
+          include-hidden-files: true
+          path: aur/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release
+          path: release
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          (cd release/dist && sha256sum -c "scdr-$VERSION.tar.gz.sha256")
+          flags=()
+          case "$VERSION" in 0.*|*-*) flags+=(--prerelease) ;; esac
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag "${flags[@]}" \
+            --title "scdr $VERSION" --notes-file release/notes.md \
+            "release/dist/scdr-$VERSION.tar.gz" "release/dist/scdr-$VERSION.tar.gz.sha256"

@@ -53,6 +53,18 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
+    // Exit 3 (scdrd.service: RestartPreventExitStatus=3) rather than a
+    // restart loop while another priority daemon runs.
+    let rivals = scdr::rivals::running(std::path::Path::new("/proc"));
+    if !rivals.is_empty() && !args.dry_run {
+        tracing::error!(
+            "{} is running: it and scdr would undo each other's priorities. Import its rules \
+             (scdrctl import ananicy /etc/ananicy.d --output /etc/scdr/rules.d/50-ananicy.toml), \
+             then stop and disable it (systemctl disable --now <its unit>) and start scdrd again",
+            rivals.join(" and ")
+        );
+        std::process::exit(3);
+    }
     let paths = Paths {
         etc: args.etc_dir,
         share: args.share_dir,

@@ -53,7 +53,8 @@ impl Daemon {
         serde_json::to_string(&st).unwrap_or_default()
     }
 
-    /// The focused window's process (from the session agent's KWin script).
+    /// The focused window's process (from the session agent); 0 means no app
+    /// is focused (the screen is locked).
     async fn set_foreground(
         &self,
         pid: u32,

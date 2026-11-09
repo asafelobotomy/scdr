@@ -10,6 +10,8 @@ BusName=org.scdr.Daemon1
 ExecStart=/usr/bin/scdrd
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
+# Exit 3: another priority daemon runs (see Conflicts=); retrying won't help.
+RestartPreventExitStatus=3
 # Pause and role switches persist here (runtime.json).
 StateDirectory=scdr
 # What scdr has changed (ledger.json), so a restart after a crash can undo

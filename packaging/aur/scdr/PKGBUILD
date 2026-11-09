@@ -16,8 +16,10 @@ optdepends=('scx-scheds: sched_ext schedulers ([sched_ext])'
             'power-profiles-daemon: per-power-profile roles')
 install=scdr.install
 makedepends=('cargo')
-source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-# After tagging v$pkgver on GitHub, replace with the real checksum: updpkgsums
+# The source archive the release workflow uploads (git archive of the tag),
+# not GitHub's generated /archive/ tarball, whose bytes aren't guaranteed.
+# The release's `aur` artifact has this PKGBUILD with the real checksum.
+source=("$pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
 sha256sums=('SKIP')
 
 prepare() {
