@@ -13,6 +13,7 @@ enum devbox_stat {
 	DST_IDLE_KICK,     /* woke an idle CPU for a queued task */
 	DST_STARVE_RESCUE, /* batch served ahead of interactive (starvation guard) */
 	DST_HINT_DEMOTED,  /* nice<0 / hinted task demoted to batch as a hog */
+	DST_CGROUP_WEIGHTED, /* enqueue of a task whose cgroup factor is not 1.0 */
 	DEVBOX_NR_STATS,
 };
 

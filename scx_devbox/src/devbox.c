@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <linux/types.h>
 #include <bpf/bpf.h>
@@ -38,6 +39,7 @@ static const char *stat_names[DEVBOX_NR_STATS] = {
 	[DST_IDLE_KICK]     = "idle_kick",
 	[DST_STARVE_RESCUE] = "starve_rescue",
 	[DST_HINT_DEMOTED]  = "hint_demoted",
+	[DST_CGROUP_WEIGHTED] = "cgroup_weighted",
 };
 
 static void usage(const char *prog)
@@ -305,7 +307,17 @@ int main(int argc, char **argv)
 	signal(SIGTERM, on_signal);
 
 	/* The kernel asks for a restart e.g. when CPUs change mid-load. */
-	while ((res = run(&cfg, ncpu, stats_secs)) == RUN_RESTART && !stop) {
+	for (;;) {
+		struct timespec t0, t1;
+
+		clock_gettime(CLOCK_MONOTONIC, &t0);
+		res = run(&cfg, ncpu, stats_secs);
+		if (res != RUN_RESTART || stop)
+			break;
+		/* A run that lasted a while was healthy: count restarts afresh. */
+		clock_gettime(CLOCK_MONOTONIC, &t1);
+		if (t1.tv_sec - t0.tv_sec > 60)
+			restarts = 0;
 		if (++restarts > 10) {
 			fprintf(stderr, "giving up after %u restarts\n", restarts - 1);
 			return 1;
