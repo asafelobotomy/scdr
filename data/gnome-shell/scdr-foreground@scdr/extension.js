@@ -3,6 +3,7 @@
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Meta from 'gi://Meta';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 export default class ScdrForeground extends Extension {
@@ -20,7 +21,19 @@ export default class ScdrForeground extends Extension {
 
     _report() {
         const window = global.display.focus_window;
-        const pid = window?.get_pid() ?? -1;
+        if (!window)
+            return;
+        // Only real application windows; not menus, tooltips, docks, the
+        // desktop, or the shell's own windows.
+        const type = window.get_window_type();
+        if (type !== Meta.WindowType.NORMAL && type !== Meta.WindowType.DIALOG &&
+            type !== Meta.WindowType.MODAL_DIALOG)
+            return;
+        const klass = (window.get_wm_class() ?? '').toLowerCase();
+        const appId = window.get_gtk_application_id() ?? '';
+        if (klass === 'gnome-shell' || appId === 'org.gnome.Shell')
+            return;
+        const pid = window.get_pid();
         if (pid <= 0)
             return;
         // A string, matching what the KWin script sends.

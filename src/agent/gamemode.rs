@@ -33,7 +33,7 @@ pub async fn watch(session: zbus::Connection, shared: Shared) -> anyhow::Result<
     let dbus = zbus::fdo::DBusProxy::new(&session).await?;
     if dbus.name_has_owner(BusName::try_from(SERVICE)?).await.unwrap_or(false) {
         if let Ok(games) = gm.list_games().await {
-            shared.update(|s| s.games = games.iter().map(|(pid, _)| *pid as u32).collect());
+            shared.set_games(games.iter().map(|(pid, _)| *pid as u32).collect());
         }
     }
 
@@ -43,14 +43,14 @@ pub async fn watch(session: zbus::Connection, shared: Shared) -> anyhow::Result<
                 if let Ok(args) = sig.args() {
                     let pid = args.pid as u32;
                     tracing::info!("GameMode registered game {pid}");
-                    shared.update(|s| { s.games.insert(pid); });
+                    shared.add_game(pid);
                 }
             }
             Some(sig) = unregistered.next() => {
                 if let Ok(args) = sig.args() {
                     let pid = args.pid as u32;
                     tracing::info!("GameMode unregistered game {pid}");
-                    shared.update(|s| { s.games.remove(&pid); });
+                    shared.remove_game(pid);
                 }
             }
             else => return Ok(()),

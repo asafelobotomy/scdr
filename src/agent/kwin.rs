@@ -35,7 +35,9 @@ pub async fn load(session: &zbus::Connection) -> anyhow::Result<()> {
         .join("scdr");
     std::fs::create_dir_all(&dir)?;
     let path = dir.join("kwin-foreground.js");
-    std::fs::write(&path, SCRIPT)?;
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(SCRIPT) {
+        std::fs::write(&path, SCRIPT)?;
+    }
 
     let kwin = ScriptingProxy::new(session).await?;
     if kwin.is_script_loaded(NAME).await.context("KWin is not running")? {

@@ -21,11 +21,7 @@ pub fn available() -> bool {
 
 pub async fn watch(shared: Shared) -> anyhow::Result<()> {
     let dir = socket_dir().ok_or_else(|| anyhow::anyhow!("Hyprland sockets not found"))?;
-    let report = |pid: Option<u32>| {
-        if let Some(pid) = pid {
-            shared.update(|s| s.foreground = Some(pid));
-        }
-    };
+    let report = |pid| super::ipc::report(&shared, pid);
     report(active_pid(&dir).await);
     let mut events = BufReader::new(UnixStream::connect(dir.join(".socket2.sock")).await?).lines();
     while let Some(line) = events.next_line().await? {
