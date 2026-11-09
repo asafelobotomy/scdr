@@ -21,10 +21,11 @@ exec_recheck_ms = 1500
 iocost = false
 
 [exceptions]
-# Never touched.
+# Never touched. scx_* are sched_ext schedulers and scx_loader: demoting
+# them with system services would slow the userspace half of a scheduler.
 name = [
     "systemd", "systemd-*", "dbus-daemon", "dbus-broker*", "rtkit-daemon",
-    "scdrd", "gamemoded",
+    "scdrd", "gamemoded", "scx_*",
 ]
 # Tools that set priorities on purpose. The tool, whatever it execs, and all
 # its descendants are left alone. (gamemoderun isn't here: games GameMode
@@ -197,18 +198,22 @@ exe = [
     "/usr/bin/jackd", "/usr/bin/pulseaudio",
 ]
 
+# Names are easy to fake (`exec -a kwin_wayland sleep`, or a renamed copy),
+# and these profiles lower nice and shield from the OOM killer, so they
+# match the binary's real path, under /usr where only root can put one.
 [[rule]]
 profile = "compositor"
-name = [
-    "kwin_wayland", "kwin_x11", "gnome-shell", "Xwayland", "Xorg",
-    "Hyprland", "sway", "niri", "labwc", "wayfire", "cosmic-comp",
+exe = [
+    "/usr/*/kwin_wayland", "/usr/*/kwin_x11", "/usr/*/gnome-shell", "/usr/*/Xwayland",
+    "/usr/*/Xorg", "/usr/*/Hyprland", "/usr/*/sway", "/usr/*/niri", "/usr/*/labwc",
+    "/usr/*/wayfire", "/usr/*/cosmic-comp",
 ]
 
 [[rule]]
 profile = "desktop"
-name = [
-    "plasmashell", "krunner", "kded6", "xdg-desktop-portal*",
-    "gnome-session-binary", "cosmic-panel", "waybar",
+exe = [
+    "/usr/*/plasmashell", "/usr/*/krunner", "/usr/*/kded6", "/usr/*/xdg-desktop-portal*",
+    "/usr/*/gnome-session-binary", "/usr/*/cosmic-panel", "/usr/*/waybar",
 ]
 
 [[rule]]

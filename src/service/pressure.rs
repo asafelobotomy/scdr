@@ -31,7 +31,9 @@ impl Service {
             "CPU pressure {avg10:.1}%: background role {}",
             if active { "on" } else { "off" }
         );
-        let uids: Vec<u32> = self.sessions.keys().copied().collect();
+        let mut uids: Vec<u32> = self.sessions.values().map(|s| s.uid).collect();
+        uids.sort_unstable();
+        uids.dedup();
         let pids = uids.into_iter().flat_map(|uid| cgroup_pids(app_slice(uid).trim_end_matches('/'))).collect();
         self.reevaluate(pids);
     }

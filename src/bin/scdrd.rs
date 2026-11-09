@@ -58,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
         share: args.share_dir,
         state: args.state_dir,
     };
-    let config = Config::load(&paths).context("loading configuration")?;
+    let config = load_config(&paths)?;
     if config.files.is_empty() {
         tracing::warn!("no configuration files found; nothing will be managed");
     }
@@ -115,6 +115,17 @@ async fn main() -> anyhow::Result<()> {
             .await
             .context("claiming org.scdr.Daemon1 on the system bus (is scdrd already running?)")?;
         Some(conn)
+    };
+
+    // A session agent leaving the bus (crash, logout) drops its roles at once;
+    // the periodic check in the rescan arm stays as a backstop.
+    let bus_proxy = match &bus {
+        Some(conn) => zbus::fdo::DBusProxy::new(conn).await.ok(),
+        None => None,
+    };
+    let mut owner_changes = match &bus_proxy {
+        Some(p) => p.receive_name_owner_changed().await.ok(),
+        None => None,
     };
 
     // Follow power-profiles-daemon when it is running; roles can depend on it.
@@ -193,6 +204,13 @@ async fn main() -> anyhow::Result<()> {
                 service.lock().unwrap().rescan();
                 next_rescan = rescan_every.map(|d| Instant::now() + d);
             }
+            Some(sig) = next_item(&mut owner_changes) => {
+                if let Ok(args) = sig.args() {
+                    if args.new_owner().is_none() {
+                        service.lock().unwrap().drop_agent(args.name().as_str());
+                    }
+                }
+            }
             Some(change) = next_item(&mut ppd_changes) => {
                 if let Ok(profile) = change.get().await {
                     service.lock().unwrap().set_power_profile(Some(profile));
@@ -230,6 +248,33 @@ async fn main() -> anyhow::Result<()> {
     policy.restore(bus.as_ref()).await;
     service.lock().unwrap().shutdown();
     Ok(())
+}
+
+/// Loads the configuration. The widget's settings layer is only checked when
+/// saved, so an upgrade that drops a profile it names would stop scdrd from
+/// starting, and the widget can't fix it while scdrd is down: move a layer
+/// that breaks the config aside and start without it.
+fn load_config(paths: &Paths) -> anyhow::Result<Config> {
+    let err = match Config::load(paths) {
+        Ok(c) => return Ok(c),
+        Err(e) => e,
+    };
+    let layer = paths.state.join(scdr::config::layer::LAYER_FILE);
+    let bad = layer.with_extension("toml.bad");
+    if !layer.is_file() || std::fs::rename(&layer, &bad).is_err() {
+        return Err(err).context("loading configuration");
+    }
+    match Config::load(paths) {
+        Ok(c) => {
+            tracing::error!("{err}; moved the widget's settings to {} and started without them", bad.display());
+            Ok(c)
+        }
+        Err(_) => {
+            // The layer wasn't the problem: put it back.
+            let _ = std::fs::rename(&bad, &layer);
+            Err(err).context("loading configuration")
+        }
+    }
 }
 
 /// Samples CPU pressure, then brings the scheduler and EEVDF knobs in line.

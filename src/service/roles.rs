@@ -1,6 +1,8 @@
 //! Live context from each user's session agent: the focused app, processes
 //! playing audio, and GameMode games. Each session is keyed by the agent's
-//! uid; scdrd only accepts pids that belong to that uid.
+//! bus name, so two agents of one user (two seats, a second login) don't
+//! overwrite each other; roles for a process combine every session of its
+//! uid. scdrd only accepts pids that belong to the agent's uid.
 
 use super::{RuleRef, Service, State, Trigger};
 use crate::config::{NamedProfile, Role};
@@ -11,8 +13,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct Session {
-    /// The agent's unique bus name, to notice when it goes away.
-    pub sender: String,
+    /// The uid the agent runs as.
+    pub uid: u32,
     /// cgroup path of the focused app's unit, and the window's pid.
     pub foreground: Option<(String, u32)>,
     pub audio: BTreeSet<u32>,
@@ -28,7 +30,8 @@ pub struct SessionReport {
     pub games: Vec<u32>,
 }
 
-pub(super) type Sessions = HashMap<u32, Session>;
+/// Sessions by their agent's unique bus name.
+pub(super) type Sessions = HashMap<String, Session>;
 
 impl Service {
     /// The focused window of `uid`'s session is `pid`. Only app units
@@ -41,7 +44,7 @@ impl Service {
 
         // Without a focused app the background role can't be placed; if
         // pressure came first (e.g. right after a restart), re-check every app.
-        let first = self.sessions.get(&uid).is_none_or(|s| s.foreground.is_none());
+        let first = !self.sessions.values().any(|s| s.uid == uid && s.foreground.is_some());
         let session = self.session(uid, sender);
         let old = std::mem::replace(&mut session.foreground, new.clone());
         let mut affected = Vec::new();
@@ -75,26 +78,20 @@ impl Service {
 
     /// The bus names of connected session agents.
     pub fn agent_senders(&self) -> Vec<String> {
-        self.sessions.values().map(|s| s.sender.clone()).collect()
+        self.sessions.keys().cloned().collect()
     }
 
     /// An agent disconnected: forget its session and re-evaluate what it boosted.
     pub fn drop_agent(&mut self, sender: &str) {
-        let gone: Vec<u32> = self
-            .sessions
-            .iter()
-            .filter(|(_, s)| s.sender == sender)
-            .map(|(uid, _)| *uid)
-            .collect();
-        for uid in gone {
-            let s = self.sessions.remove(&uid).unwrap();
-            tracing::info!("session agent for uid {uid} went away");
-            let mut affected: Vec<u32> = s.audio.into_iter().chain(s.games).collect();
-            if let Some((cgroup, _)) = s.foreground {
-                affected.extend(cgroup_pids(&cgroup));
-            }
-            self.reevaluate(affected);
+        let Some(s) = self.sessions.remove(sender) else {
+            return;
+        };
+        tracing::info!("session agent {sender} (uid {}) went away", s.uid);
+        let mut affected: Vec<u32> = s.audio.into_iter().chain(s.games).collect();
+        if let Some((cgroup, _)) = s.foreground {
+            affected.extend(cgroup_pids(&cgroup));
         }
+        self.reevaluate(affected);
     }
 
     /// power-profiles-daemon switched profiles; roles may differ.
@@ -122,15 +119,20 @@ impl Service {
 
     /// The role profile for a process no rule matched, if any.
     pub(super) fn role_match(&self, info: &ProcInfo) -> Option<(RuleRef, NamedProfile)> {
-        let session = self.sessions.get(&info.uid)?;
+        let sessions: Vec<&Session> = self.sessions.values().filter(|s| s.uid == info.uid).collect();
+        if sessions.is_empty() {
+            return None;
+        }
         let roles = self.config.roles.for_power(self.power_profile.as_deref());
-        let focused = session.foreground.as_ref().is_some_and(|(cg, _)| {
-            info.cgroup == *cg || info.cgroup.starts_with(&format!("{cg}/"))
+        let focused = sessions.iter().any(|s| {
+            s.foreground.as_ref().is_some_and(|(cg, _)| {
+                info.cgroup == *cg || info.cgroup.starts_with(&format!("{cg}/"))
+            })
         });
         let active = |role: Role| -> bool {
             match role {
-                Role::Game => session.games.contains(&info.pid),
-                Role::Audio => session.audio.contains(&info.pid),
+                Role::Game => sessions.iter().any(|s| s.games.contains(&info.pid)),
+                Role::Audio => sessions.iter().any(|s| s.audio.contains(&info.pid)),
                 Role::Foreground => focused,
                 // Never the focused app, even with the foreground role off.
                 Role::Background => {
@@ -155,9 +157,9 @@ impl Service {
     pub fn sessions_report(&self) -> Vec<SessionReport> {
         let mut out: Vec<SessionReport> = self
             .sessions
-            .iter()
-            .map(|(uid, s)| SessionReport {
-                uid: *uid,
+            .values()
+            .map(|s| SessionReport {
+                uid: s.uid,
                 foreground: s.foreground.as_ref().map(|(cg, pid)| {
                     let unit = UnitId::from_cgroup(cg).map(|u| u.unit).unwrap_or_else(|| cg.clone());
                     format!("{unit} (window pid {pid})")
@@ -171,9 +173,9 @@ impl Service {
     }
 
     fn session(&mut self, uid: u32, sender: &str) -> &mut Session {
-        let s = self.sessions.entry(uid).or_default();
-        s.sender = sender.to_owned();
-        s
+        self.sessions
+            .entry(sender.to_owned())
+            .or_insert_with(|| Session { uid, ..Default::default() })
     }
 
     fn role_pids(&self) -> Vec<u32> {
@@ -248,4 +250,24 @@ pub(super) fn cgroup_pids(cgroup: &str) -> Vec<u32> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::Config;
+    use crate::service::Service;
+
+    #[test]
+    fn agents_of_one_user_keep_their_own_sessions() {
+        let mut svc = Service::new(Config::from_sources(Vec::new()).unwrap(), true);
+        svc.session(1000, ":1.10").games.insert(4242);
+        svc.session(1000, ":1.20").audio.insert(4343);
+        assert_eq!(svc.sessions.len(), 2);
+        // The second agent leaving doesn't take the first one's state with it.
+        svc.drop_agent(":1.20");
+        assert_eq!(svc.agent_senders(), vec![":1.10".to_owned()]);
+        assert!(svc.sessions[":1.10"].games.contains(&4242));
+        svc.drop_agent(":1.99"); // unknown names are ignored
+        assert_eq!(svc.sessions.len(), 1);
+    }
 }

@@ -163,6 +163,10 @@ struct RawFile {
     pressure: Option<policy::RawPressure>,
 }
 
+/// Upper bounds for `[system]` intervals: a day, and a minute.
+const MAX_RESCAN_SECS: u64 = 86_400;
+const MAX_EXEC_RECHECK_MS: u64 = 60_000;
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawSystem {
@@ -248,6 +252,13 @@ impl Config {
                 toml::from_str(&text).map_err(|e| ConfigError::invalid(&path, e.to_string()))?;
 
             if let Some(s) = raw.system {
+                // Huge values overflow the daemon's timers.
+                if s.rescan_secs.is_some_and(|v| v > MAX_RESCAN_SECS) {
+                    return Err(ConfigError::invalid(&path, format!("rescan_secs must be at most {MAX_RESCAN_SECS}")));
+                }
+                if s.exec_recheck_ms.is_some_and(|v| v > MAX_EXEC_RECHECK_MS) {
+                    return Err(ConfigError::invalid(&path, format!("exec_recheck_ms must be at most {MAX_EXEC_RECHECK_MS}")));
+                }
                 system.autogroup = s.autogroup.or(system.autogroup);
                 system.rescan_secs = s.rescan_secs.unwrap_or(system.rescan_secs);
                 system.exec_recheck_ms = s.exec_recheck_ms.unwrap_or(system.exec_recheck_ms);

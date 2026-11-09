@@ -215,3 +215,11 @@ fn scheduler_policy_and_pressure() {
         assert!(cfg(&[("b.toml", bad)]).is_err(), "{bad}");
     }
 }
+
+#[test]
+fn system_intervals_are_bounded() {
+    let load = |toml: &str| Config::from_sources(vec![("t.toml".into(), toml.into())]);
+    assert!(load("[system]\nrescan_secs = 86400\nexec_recheck_ms = 60000\n").is_ok());
+    assert!(load("[system]\nrescan_secs = 18446744073709551615\n").is_err());
+    assert!(load("[system]\nexec_recheck_ms = 60001\n").is_err());
+}
