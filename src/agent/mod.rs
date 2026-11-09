@@ -12,6 +12,7 @@
 
 mod gamemode;
 mod hyprland;
+mod ipc;
 mod kwin;
 mod niri;
 mod pipewire;
@@ -43,13 +44,46 @@ pub struct Shared {
 }
 
 impl Shared {
-    pub fn update(&self, f: impl FnOnce(&mut State)) {
-        let mut s = self.state.lock().unwrap();
-        let before = s.clone();
-        f(&mut s);
-        if *s != before {
+    fn notify_if(&self, changed: bool) {
+        if changed {
             self.changed.notify_one();
         }
+    }
+
+    /// Records the focused window's pid (ignores `None`).
+    pub fn set_foreground(&self, pid: Option<u32>) {
+        let Some(pid) = pid else { return };
+        let mut s = self.state.lock().unwrap();
+        let changed = s.foreground != Some(pid);
+        s.foreground = Some(pid);
+        drop(s);
+        self.notify_if(changed);
+    }
+
+    pub fn set_audio(&self, pids: BTreeSet<u32>) {
+        let mut s = self.state.lock().unwrap();
+        let changed = s.audio != pids;
+        s.audio = pids;
+        drop(s);
+        self.notify_if(changed);
+    }
+
+    pub fn set_games(&self, pids: BTreeSet<u32>) {
+        let mut s = self.state.lock().unwrap();
+        let changed = s.games != pids;
+        s.games = pids;
+        drop(s);
+        self.notify_if(changed);
+    }
+
+    pub fn add_game(&self, pid: u32) {
+        let changed = self.state.lock().unwrap().games.insert(pid);
+        self.notify_if(changed);
+    }
+
+    pub fn remove_game(&self, pid: u32) {
+        let changed = self.state.lock().unwrap().games.remove(&pid);
+        self.notify_if(changed);
     }
 
     fn snapshot(&self) -> State {
@@ -67,7 +101,7 @@ impl Session1 {
     /// A string, because KWin's callDBus marshals JS numbers by its own rules.
     fn set_foreground(&self, pid: String) {
         if let Ok(pid) = pid.trim().parse::<u32>() {
-            self.shared.update(|s| s.foreground = Some(pid));
+            self.shared.set_foreground(Some(pid));
         }
     }
 }
@@ -144,10 +178,12 @@ async fn start_foreground(session: &zbus::Connection, shared: &Shared) -> bool {
         });
     };
     if hyprland::available() {
-        spawn("Hyprland IPC", Box::pin(hyprland::watch(shared.clone())));
+        let sh = shared.clone();
+        spawn("Hyprland IPC", Box::pin(ipc::retry("Hyprland IPC", move || hyprland::watch(sh.clone()))));
         false
     } else if niri::available() {
-        spawn("niri IPC", Box::pin(niri::watch(shared.clone())));
+        let sh = shared.clone();
+        spawn("niri IPC", Box::pin(ipc::retry("niri IPC", move || niri::watch(sh.clone()))));
         false
     } else if desktop.split(':').any(|d| d == "GNOME") {
         tracing::info!(

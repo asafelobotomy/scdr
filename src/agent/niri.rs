@@ -19,9 +19,7 @@ pub async fn watch(shared: Shared) -> anyhow::Result<()> {
     let mut state = Windows::default();
     while let Some(line) = lines.next_line().await? {
         if let Ok(event) = serde_json::from_str::<Value>(&line) {
-            if let Some(pid) = state.apply(&event) {
-                shared.update(|s| s.foreground = Some(pid));
-            }
+            super::ipc::report(&shared, state.apply(&event));
         }
     }
     Ok(())

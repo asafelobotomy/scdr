@@ -1,7 +1,12 @@
 //! Processes with a running PipeWire audio stream, from `pw-dump --monitor`.
 //!
 //! A stream node carries `client.id`; the client object carries
-//! `application.process.id` (for PulseAudio apps too, via pipewire-pulse).
+//! the pid. For native clients that is `pipewire.sec.pid`, taken by PipeWire
+//! from the socket's peer credentials and so a host pid even for sandboxed
+//! (Flatpak) apps, whose self-reported `application.process.id` is namespaced.
+//! PulseAudio apps arrive through pipewire-pulse (`client.api` is
+//! `pipewire-pulse`), where `sec.pid` is the pulse server itself, so those use
+//! `application.process.id`.
 //! Only `Stream/{Output,Input}/Audio` nodes in state `running` count, so an
 //! app that merely has PipeWire open isn't boosted.
 
@@ -49,8 +54,8 @@ impl Graph {
                 }
             }
             Some("PipeWire:Interface:Client") => {
-                if let Some(pid) = prop("application.process.id").and_then(as_u64) {
-                    self.clients.insert(id, pid as u32);
+                if let Some(pid) = props.and_then(client_pid) {
+                    self.clients.insert(id, pid);
                 }
             }
             _ => {}
@@ -66,6 +71,14 @@ impl Graph {
     }
 }
 
+/// The host pid of a client object's properties, if it reports one.
+fn client_pid(props: &Value) -> Option<u32> {
+    let prop = |k: &str| props.get(k).and_then(as_u64);
+    let pulse_proxy = props.get("client.api").and_then(Value::as_str) == Some("pipewire-pulse");
+    let pid = if pulse_proxy { None } else { prop("pipewire.sec.pid") };
+    pid.or_else(|| prop("application.process.id")).and_then(|p| u32::try_from(p).ok()).filter(|p| *p > 0)
+}
+
 /// pw-dump prints numbers, but some properties arrive as strings.
 fn as_u64(v: &Value) -> Option<u64> {
     v.as_u64().or_else(|| v.as_str()?.parse().ok())
@@ -79,19 +92,34 @@ pub fn spawn(shared: Shared) {
             if let Err(e) = follow(&shared) {
                 tracing::debug!("pw-dump: {e}");
             }
-            shared.update(|s| s.audio.clear());
+            shared.set_audio(BTreeSet::new());
             std::thread::sleep(Duration::from_secs(5));
         })
         .expect("spawn pipewire thread");
 }
 
 fn follow(shared: &Shared) -> std::io::Result<()> {
-    let mut child = Command::new("pw-dump")
-        .args(["--monitor", "--no-colors"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
+    let mut cmd = Command::new("pw-dump");
+    cmd.args(["--monitor", "--no-colors"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    // Die with the agent rather than be orphaned. PDEATHSIG is tied to the
+    // *thread* that forked, which is fine here: this thread loops for the life
+    // of the process, so the signal comes when the agent exits.
+    let parent = std::process::id();
+    // SAFETY: the closure only calls async-signal-safe functions.
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // The agent may have exited between fork and prctl.
+            if libc::getppid() as u32 != parent {
+                libc::_exit(1);
+            }
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn()?;
     let stdout = child.stdout.take().expect("piped stdout");
     let mut graph = Graph::default();
     let mut last = BTreeSet::new();
@@ -105,7 +133,7 @@ fn follow(shared: &Shared) -> std::io::Result<()> {
         if now != last {
             tracing::debug!("audio clients: {now:?}");
             last = now.clone();
-            shared.update(|s| s.audio = now);
+            shared.set_audio(now);
         }
     }
     let _ = child.kill();
@@ -142,5 +170,20 @@ mod tests {
         // Removal is {"id": N, "info": null}.
         g.update(&json!({"id": 80, "info": null}));
         assert_eq!(g.audio_pids(), BTreeSet::from([777]));
+    }
+
+    #[test]
+    fn client_pid_prefers_peer_credentials_except_for_pulse_proxies() {
+        // Flatpak app on the native socket: namespaced self-report, real sec.pid.
+        let sandboxed = json!({"application.process.id": 2, "pipewire.sec.pid": 5150});
+        assert_eq!(client_pid(&sandboxed), Some(5150));
+        // PulseAudio client: sec.pid is pipewire-pulse, so keep the app's pid.
+        let pulse = json!({"client.api": "pipewire-pulse", "application.process.id": 1267, "pipewire.sec.pid": 1425});
+        assert_eq!(client_pid(&pulse), Some(1267));
+        // No peer credentials: fall back; string pids parse; nothing -> None.
+        assert_eq!(client_pid(&json!({"application.process.id": "777"})), Some(777));
+        assert_eq!(client_pid(&json!({"pipewire.sec.pid": "9"})), Some(9));
+        assert_eq!(client_pid(&json!({"application.name": "x"})), None);
+        assert_eq!(client_pid(&json!({"pipewire.sec.pid": 0})), None);
     }
 }
