@@ -54,6 +54,16 @@ impl UnitId {
     }
 }
 
+/// The name of the unit a process belongs to (`app-firefox-12.scope`),
+/// without resolving which manager owns it.
+pub fn unit_name(cgroup: &str) -> Option<&str> {
+    let unit = cgroup
+        .split('/')
+        .filter(|p| !p.is_empty())
+        .rfind(|p| p.ends_with(".service") || p.ends_with(".scope"))?;
+    (unit != "init.scope" && !unit.starts_with("user@")).then_some(unit)
+}
+
 /// The cgroup of the unit a process belongs to: its path cut after the
 /// unit's own component (a process may sit in a delegated sub-cgroup).
 pub fn unit_cgroup(cgroup: &str) -> Option<String> {
@@ -78,7 +88,25 @@ fn user_manager_uid(part: &str) -> Option<u32> {
     part.strip_prefix("user@")?.strip_suffix(".service")?.parse().ok()
 }
 
+/// A uid's user name, cached: unit ids are resolved on every exec of a
+/// managed process, and getpwuid re-reads /etc/passwd each time.
 fn user_name(uid: u32) -> Option<String> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<u32, Option<String>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(hit) = cache.lock().unwrap().get(&uid) {
+        return hit.clone();
+    }
+    let name = lookup_user_name(uid);
+    // A user without a name now may get one (sssd, systemd-homed): only cache hits.
+    if name.is_some() {
+        cache.lock().unwrap().insert(uid, name.clone());
+    }
+    name
+}
+
+fn lookup_user_name(uid: u32) -> Option<String> {
     let mut buf = vec![0 as libc::c_char; 1024];
     // SAFETY: zeroed passwd is a valid out-parameter.
     let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
@@ -204,6 +232,9 @@ mod tests {
             UnitId::from_cgroup("/system.slice/docker-ab.scope/inner").unwrap().unit,
             "docker-ab.scope"
         );
+        assert_eq!(unit_name(&app), Some("app-firefox-12.scope"));
+        assert_eq!(unit_name("/system.slice/docker-ab.scope/inner"), Some("docker-ab.scope"));
+        assert_eq!(unit_name("/user.slice/user-1000.slice/user@1000.service/init.scope"), None);
         assert_eq!(
             unit_cgroup("/system.slice/docker-ab.scope/inner").as_deref(),
             Some("/system.slice/docker-ab.scope")

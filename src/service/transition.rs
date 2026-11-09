@@ -38,6 +38,8 @@ impl Service {
                 m.rule = rule;
                 m.profile = profile.name;
                 m.target = target;
+                m.name.clone_from(&info.comm);
+                m.app = super::control::app_of_cgroup(&info.cgroup);
                 State::Managed(m)
             }
             (State::Managed(m), None) => {
@@ -67,6 +69,8 @@ impl Service {
                         original,
                         target,
                         last,
+                        name: info.comm.clone(),
+                        app: super::control::app_of_cgroup(&info.cgroup),
                     }))
                 }
                 Err(_) => State::Unmatched, // exited

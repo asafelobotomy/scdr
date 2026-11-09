@@ -102,11 +102,18 @@ impl Service {
     }
 
     pub fn processes(&self) -> Vec<ProcessReport> {
+        self.process_reports(false)
+    }
+
+    /// Reports for managed processes; with `roles_only`, just those a role
+    /// boosted. Each report reads /proc, so the widget's 2 s State refresh
+    /// asks only for the few it shows, not every managed process.
+    fn process_reports(&self, roles_only: bool) -> Vec<ProcessReport> {
         let mut out: Vec<ProcessReport> = self
             .procs
             .iter()
             .filter_map(|(pid, e)| match &e.state {
-                State::Managed(m) => {
+                State::Managed(m) if !roles_only || m.rule.source == "role" => {
                     let role = (m.rule.source == "role")
                         .then(|| m.rule.conditions.split(':').next().unwrap_or("").to_owned());
                     let why = if role.is_some() {
@@ -116,11 +123,11 @@ impl Service {
                     };
                     Some(ProcessReport {
                         pid: *pid,
-                        name: crate::procfs::comm(*pid).unwrap_or_default(),
+                        name: m.name.clone(),
                         profile: m.profile.clone(),
                         role,
                         why,
-                        app: app_of(*pid),
+                        app: m.app.clone(),
                     })
                 }
                 _ => None,
@@ -131,11 +138,11 @@ impl Service {
     }
 
     pub fn widget_state(&self) -> WidgetState {
-        let processes = self.processes();
+        let managed = self.procs.values().filter(|e| matches!(e.state, State::Managed(_))).count();
         let roles = self.config.roles.for_power(self.power_profile.as_deref());
         WidgetState {
             paused: self.paused,
-            managed: processes.len(),
+            managed,
             power_profile: self.power_profile.clone(),
             // Whole percent: State is re-sent to every listener when it changes.
             cpu_pressure: self.cpu_pressure.map(f64::round),
@@ -146,7 +153,7 @@ impl Service {
                 .filter_map(|r| Some((r.to_string(), roles.get(r)?.to_owned(), self.role_enabled(r))))
                 .collect(),
             agents: self.sessions.len(),
-            boosted: processes.into_iter().filter(|p| p.role.is_some()).collect(),
+            boosted: self.process_reports(true),
         }
     }
 
@@ -183,14 +190,12 @@ impl Service {
 
 /// `app-com.anthropic.Claude-3405.scope` -> `com.anthropic.Claude`;
 /// `app-org.telegram.desktop@autostart.service` -> `org.telegram.desktop`.
-fn app_of(pid: u32) -> Option<String> {
-    let cgroup = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
-    let path = cgroup.lines().find_map(|l| l.strip_prefix("0::"))?;
-    if !path.contains("/app.slice/") {
+/// The desktop app a cgroup belongs to, if it is in an `app.slice` unit.
+pub(super) fn app_of_cgroup(cgroup: &str) -> Option<String> {
+    if !cgroup.contains("/app.slice/") {
         return None;
     }
-    let unit = crate::units::UnitId::from_cgroup(path)?.unit;
-    app_name(&unit)
+    app_name(crate::units::unit_name(cgroup)?)
 }
 
 fn app_name(unit: &str) -> Option<String> {

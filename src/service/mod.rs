@@ -68,6 +68,10 @@ pub struct Managed {
     pub original: Snapshot,
     pub target: Snapshot,
     pub last: Outcome,
+    /// comm and desktop app as of the last evaluation, for reports, so
+    /// listing managed processes needs no /proc reads.
+    pub name: String,
+    pub app: Option<String>,
 }
 
 #[derive(Debug, Clone)]
