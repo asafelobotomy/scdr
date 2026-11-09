@@ -1,8 +1,27 @@
 use super::super::Paths;
 use serde_json::json;
 
-/// A throwaway share/etc/state tree under the target directory.
-fn tree(name: &str, share: &str, etc: Option<&str>) -> Paths {
+/// A throwaway share/etc/state tree in the temp directory, removed when
+/// the test ends (pass or fail).
+struct Tree {
+    root: std::path::PathBuf,
+    paths: Paths,
+}
+
+impl std::ops::Deref for Tree {
+    type Target = Paths;
+    fn deref(&self) -> &Paths {
+        &self.paths
+    }
+}
+
+impl Drop for Tree {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn tree(name: &str, share: &str, etc: Option<&str>) -> Tree {
     let root = std::env::temp_dir().join(format!("scdr-layer-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let paths = Paths { etc: root.join("etc"), share: root.join("share"), state: root.join("state") };
@@ -13,7 +32,7 @@ fn tree(name: &str, share: &str, etc: Option<&str>) -> Paths {
     if let Some(etc) = etc {
         std::fs::write(paths.etc.join("scdr.toml"), etc).unwrap();
     }
-    paths
+    Tree { root, paths }
 }
 
 const SHARE: &str = r#"
