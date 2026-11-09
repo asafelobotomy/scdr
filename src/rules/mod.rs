@@ -220,11 +220,11 @@ fn is_literal(p: &str) -> bool {
 }
 
 /// The kernel truncates comm to 15 characters, so a longer literal can only
-/// ever match an executable (or argv[0]) file name.
+/// ever match an ancestor's executable file name. (`name` is left out: it
+/// matches the process's own exe and argv[0] names too, so a long one is
+/// normal, e.g. the shipped `baloo_file_extractor`.)
 fn long_name_warnings(raw: &RawRule) -> Vec<String> {
     let fields = [
-        ("name", &raw.name),
-        ("not_name", &raw.not_name),
         ("parent", &raw.parent),
         ("not_parent", &raw.not_parent),
         ("ancestor", &raw.ancestor),

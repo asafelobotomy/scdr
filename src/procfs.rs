@@ -66,6 +66,21 @@ impl ProcInfo {
     pub fn read(pid: u32) -> io::Result<Self> {
         let stat = Stat::read(pid)?;
         let kthread = stat.is_kernel_thread();
+        // Kernel threads (often half of all pids) are never managed: skip
+        // the four other /proc reads every rescan would do for them.
+        if kthread {
+            return Ok(ProcInfo {
+                pid,
+                ppid: stat.ppid,
+                start_time: stat.start_time,
+                comm: stat.comm,
+                exe: None,
+                cmdline: Vec::new(),
+                cgroup: String::new(),
+                uid: 0,
+                kthread,
+            });
+        }
 
         let exe = fs::read_link(format!("/proc/{pid}/exe")).ok().map(|p| {
             let s = p.to_string_lossy().into_owned();
