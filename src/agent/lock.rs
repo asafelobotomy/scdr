@@ -6,7 +6,7 @@
 
 use super::Shared;
 use futures_util::StreamExt;
-use zbus::zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 
 #[zbus::proxy(
     interface = "org.freedesktop.login1.Manager",
@@ -49,7 +49,7 @@ async fn session_path(system: &zbus::Connection) -> anyhow::Result<OwnedObjectPa
         return Ok(path);
     }
     let user = UserProxy::builder(system)
-        .path(manager.get_user(current_uid()).await?)?
+        .path(manager.get_user(current_uid()).await?)
         .build()
         .await?;
     let (id, path) = user.display().await?;
@@ -66,7 +66,7 @@ fn current_uid() -> u32 {
 pub async fn watch(system: zbus::Connection, shared: Shared) -> anyhow::Result<()> {
     let path = session_path(&system).await?;
     let session = SessionProxy::builder(&system)
-        .path(path.clone())?
+        .path(path.clone())
         .build()
         .await?;
     tracing::info!(
