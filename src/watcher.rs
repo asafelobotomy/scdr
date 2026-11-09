@@ -44,6 +44,8 @@ pub enum Event {
     },
     /// The socket buffer overflowed and events were lost.
     Overrun,
+    /// The socket failed and couldn't be reopened: no more events will come.
+    Lost,
 }
 
 /// Subscribes to process events and forwards them from a background thread.
@@ -134,7 +136,20 @@ fn listen_message() -> Vec<u8> {
     m
 }
 
-fn run(sock: OwnedFd, tx: UnboundedSender<Event>) {
+/// A few tries at a fresh subscription after the socket failed.
+fn resubscribe() -> io::Result<OwnedFd> {
+    let mut last = io::Error::other("no attempt");
+    for delay in [0, 1, 5] {
+        std::thread::sleep(std::time::Duration::from_secs(delay));
+        match subscribe() {
+            Ok(s) => return Ok(s),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
+fn run(mut sock: OwnedFd, tx: UnboundedSender<Event>) {
     let mut buf = vec![0u8; 64 * 1024];
     loop {
         // SAFETY: buf is valid for buf.len() bytes.
@@ -158,8 +173,22 @@ fn run(sock: OwnedFd, tx: UnboundedSender<Event>) {
                     continue;
                 }
                 _ => {
-                    tracing::error!("process event socket failed: {err}");
-                    return;
+                    tracing::error!("process event socket failed: {err}; reopening");
+                    match resubscribe() {
+                        Ok(s) => {
+                            sock = s;
+                            // Events were missed while it was down.
+                            if tx.send(Event::Overrun).is_err() {
+                                return;
+                            }
+                            continue;
+                        }
+                        Err(e) => {
+                            tracing::error!("can't reopen the process event socket ({e}); polling /proc instead");
+                            let _ = tx.send(Event::Lost);
+                            return;
+                        }
+                    }
                 }
             }
         }

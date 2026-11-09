@@ -1,21 +1,26 @@
 //! Daemon state: which processes exist, what applies to them, and why.
 
 mod control;
+mod inherit;
 mod knobs;
+mod ledger;
 mod lineage;
 mod pressure;
 mod report;
 mod roles;
+mod transition;
+mod unit_jobs;
 
 pub use control::{ProcessReport, WidgetState};
 pub use pressure::cpu_some_avg10;
 pub use roles::SessionReport;
+pub use unit_jobs::{UnitDone, UnitJob, spawn_worker as spawn_unit_worker};
 mod units;
 
 use lineage::hand_tuned;
 
-use crate::apply::{self, Outcome, Snapshot};
-use crate::config::{Config, NamedProfile};
+use crate::apply::{Outcome, Snapshot};
+use crate::config::Config;
 use crate::procfs::{self, ProcInfo};
 use crate::rules::Rule;
 use crate::system;
@@ -103,6 +108,7 @@ pub struct Service {
     pub watcher: &'static str,
     procs: HashMap<u32, Entry>,
     units: BTreeMap<crate::units::UnitId, units::UnitState>,
+    unit_queue: units::UnitQueue,
     autogroup_original: Option<bool>,
     /// Disks (MAJ:MIN) on which scdr enabled iocost.
     iocost_enabled: Vec<String>,
@@ -120,6 +126,9 @@ pub struct Service {
     pub policy_report: Vec<String>,
     started: Instant,
     self_pid: u32,
+    /// Where the crash-recovery ledger lives (see `ledger`); `None` disables it.
+    pub ledger_path: Option<std::path::PathBuf>,
+    ledger_written: Option<String>,
 }
 
 impl Service {
@@ -130,6 +139,7 @@ impl Service {
             watcher: "polling",
             procs: HashMap::new(),
             units: BTreeMap::new(),
+            unit_queue: Default::default(),
             autogroup_original: None,
             iocost_enabled: Vec::new(),
             uclamp_active: false,
@@ -143,10 +153,13 @@ impl Service {
             policy_report: Vec::new(),
             started: Instant::now(),
             self_pid: std::process::id(),
+            ledger_path: None,
+            ledger_written: None,
         }
     }
 
     pub fn startup(&mut self) {
+        self.recover_ledger();
         self.apply_system();
         self.rescan();
     }
@@ -186,6 +199,11 @@ impl Service {
                 self.rescan();
                 None
             }
+            Event::Lost => {
+                self.watcher = "polling";
+                self.rescan();
+                None
+            }
             _ => None,
         }
     }
@@ -218,6 +236,8 @@ impl Service {
     /// Restores every process scdr changed, and the autogroup setting.
     pub fn shutdown(&mut self) {
         self.restore_all();
+        self.run_unit_jobs_now();
+        self.save_ledger();
     }
 
     fn evaluate(&mut self, pid: u32, trigger: Trigger) {
@@ -289,104 +309,14 @@ impl Service {
             (rule, p)
         });
 
+        // On a first look, values shared with a boosted ancestor are inherited.
+        let inherit = match self.procs[&pid].state {
+            State::Pending if excepted.is_none() => self.inherited_from(info.ppid),
+            _ => None,
+        };
         let unit_profile = matched.as_ref().map(|(_, p)| p.clone());
-        self.transition(pid, &info, trigger, matched, excepted);
+        self.transition(pid, &info, trigger, matched, excepted, inherit);
         let managed = matches!(self.procs[&pid].state, State::Managed(_));
         self.sync_unit(pid, &info, unit_profile.as_ref().filter(|_| managed));
-    }
-
-    fn transition(
-        &mut self,
-        pid: u32,
-        info: &ProcInfo,
-        trigger: Trigger,
-        matched: Option<(RuleRef, NamedProfile)>,
-        excepted: Option<String>,
-    ) {
-        let dry_run = self.dry_run;
-        let entry = self.procs.get_mut(&pid).unwrap();
-        let previous = std::mem::replace(&mut entry.state, State::Pending);
-        if let (Some(why), Trigger::Exec) = (&excepted, trigger) {
-            tracing::debug!("{} [{pid}]: left alone: {why}", info.comm);
-        }
-
-        let idle_state = || match &excepted {
-            Some(why) => State::Excepted(why.clone()),
-            None => State::Unmatched,
-        };
-
-        entry.state = match (previous, matched) {
-            (State::Managed(mut m), Some((rule, profile))) => {
-                let target = m.original.with_profile(&profile.profile);
-                if target != m.target || trigger == Trigger::Scan {
-                    m.last = apply::apply(pid, &target, &[m.original, m.target], dry_run);
-                    log_apply(info, &profile.name, &m.last, dry_run, target != m.target, trigger);
-                }
-                m.rule = rule;
-                m.profile = profile.name;
-                m.target = target;
-                State::Managed(m)
-            }
-            (State::Managed(m), None) => {
-                apply::apply(pid, &m.original, &[m.target], dry_run);
-                let why = excepted.as_deref().unwrap_or("no rule matches");
-                // A role ending is logged once for its unit, not per process.
-                if trigger == Trigger::Role {
-                    tracing::debug!("{} [{pid}]: restored ({why})", info.comm);
-                } else {
-                    tracing::info!("{} [{pid}]: restored ({why})", info.comm);
-                }
-                idle_state()
-            }
-            (_, Some((rule, profile))) => match Snapshot::original(pid) {
-                Ok(original) if original.task.cpu.is_protected() && profile.profile.sched.is_none() => {
-                    State::Excepted("main thread is realtime or sched_ext".into())
-                }
-                Ok(original) => {
-                    let target = original.with_profile(&profile.profile);
-                    let last = apply::apply(pid, &target, &[original], dry_run);
-                    log_apply(info, &profile.name, &last, dry_run, true, trigger);
-                    State::Managed(Box::new(Managed {
-                        rule,
-                        profile: profile.name,
-                        original,
-                        target,
-                        last,
-                    }))
-                }
-                Err(_) => State::Unmatched, // exited
-            },
-            (_, None) => idle_state(),
-        };
-    }
-}
-
-fn log_apply(
-    info: &ProcInfo,
-    profile: &str,
-    out: &Outcome,
-    dry_run: bool,
-    changed_target: bool,
-    trigger: Trigger,
-) {
-    if !changed_target && out.changed == 0 && out.errors.is_empty() {
-        return;
-    }
-    let verb = if dry_run { "would apply" } else { "applied" };
-    if out.errors.is_empty() {
-        // Children usually inherit their parent's values, so most new processes
-        // need no change; role switches are logged once for their unit.
-        if out.changed == 0 || trigger == Trigger::Role {
-            tracing::debug!("{} [{}]: {verb} {profile} ({out})", info.comm, info.pid);
-        } else {
-            tracing::info!("{} [{}]: {verb} {profile} ({out})", info.comm, info.pid);
-        }
-    } else {
-        tracing::warn!(
-            "{} [{}]: {verb} {profile} ({out}): {}",
-            info.comm,
-            info.pid,
-            out.errors.join("; ")
-        );
     }
 }

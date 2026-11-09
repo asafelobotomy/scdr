@@ -72,9 +72,14 @@ async fn main() -> anyhow::Result<()> {
 
     let mut service = Service::new(config, args.dry_run);
     service.load_runtime();
+    // systemd's RuntimeDirectory=scdr; kept across restarts so a crash can be undone.
+    service.ledger_path = std::env::var_os("RUNTIME_DIRECTORY")
+        .map(|d| std::path::PathBuf::from(d).join("ledger.json"))
+        .filter(|_| !args.once);
 
     if args.once {
         service.startup();
+        service.run_unit_jobs_now();
         print!("{}", service.status());
         return Ok(());
     }
@@ -88,7 +93,11 @@ async fn main() -> anyhow::Result<()> {
         ),
     }
     service.startup();
-    let polling = service.watcher == "polling";
+    let mut polling = service.watcher == "polling";
+
+    // systemctl runs on a worker thread so it never blocks this loop.
+    let (done_tx, mut unit_done) = tokio::sync::mpsc::unbounded_channel();
+    let (job_tx, unit_worker) = scdr::service::spawn_unit_worker(done_tx)?;
 
     let service = Arc::new(Mutex::new(service));
     let bus = if args.no_dbus {
@@ -118,14 +127,12 @@ async fn main() -> anyhow::Result<()> {
         None => None,
     };
 
-    let rescan_every = {
-        let secs = service.lock().unwrap().config.system.rescan_secs;
-        match (secs, polling) {
-            (0, false) => None,
-            (s, true) => Some(Duration::from_secs(s.clamp(1, 5))),
-            (s, false) => Some(Duration::from_secs(s)),
-        }
+    let rescan_interval = |secs: u64, polling: bool| match (secs, polling) {
+        (0, false) => None,
+        (s, true) => Some(Duration::from_secs(s.clamp(1, 5))),
+        (s, false) => Some(Duration::from_secs(s)),
     };
+    let mut rescan_every = rescan_interval(service.lock().unwrap().config.system.rescan_secs, polling);
     let mut next_rescan = rescan_every.map(|d| Instant::now() + d);
     let far = || Instant::now() + Duration::from_secs(3600);
 
@@ -144,6 +151,9 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("running");
 
     loop {
+        for job in service.lock().unwrap().take_unit_jobs() {
+            let _ = job_tx.send(job);
+        }
         let recheck_at = rechecks.front().map(|r| r.0).unwrap_or_else(far);
         tokio::select! {
             Some(ev) = events.recv() => {
@@ -158,6 +168,15 @@ async fn main() -> anyhow::Result<()> {
                         rechecks.push_back((Instant::now() + delay, pid, start));
                     }
                 }
+                // The event socket died for good: poll /proc instead.
+                if !polling && svc.watcher == "polling" {
+                    polling = true;
+                    rescan_every = rescan_interval(svc.config.system.rescan_secs, true);
+                    next_rescan = rescan_every.map(|d| Instant::now() + d);
+                }
+            }
+            Some(done) = unit_done.recv() => {
+                service.lock().unwrap().unit_done(done);
             }
             _ = sleep_until(recheck_at), if !rechecks.is_empty() => {
                 let now = Instant::now();
@@ -181,6 +200,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             _ = tick.tick() => {
+                service.lock().unwrap().save_ledger();
                 policy_step(&mut policy, bus.as_ref(), &service).await;
                 if let Some(conn) = &bus {
                     publish_state(conn, &service, &mut last_state).await;
@@ -201,6 +221,12 @@ async fn main() -> anyhow::Result<()> {
     }
 
     tracing::info!("shutting down");
+    // Let the worker finish what it has, so in-flight claims get restored too.
+    drop(job_tx);
+    let _ = unit_worker.join();
+    while let Ok(done) = unit_done.try_recv() {
+        service.lock().unwrap().unit_done(done);
+    }
     policy.restore(bus.as_ref()).await;
     service.lock().unwrap().shutdown();
     Ok(())

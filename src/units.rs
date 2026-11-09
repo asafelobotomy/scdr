@@ -54,6 +54,16 @@ impl UnitId {
     }
 }
 
+/// The cgroup of the unit a process belongs to: its path cut after the
+/// unit's own component (a process may sit in a delegated sub-cgroup).
+pub fn unit_cgroup(cgroup: &str) -> Option<String> {
+    let parts: Vec<&str> = cgroup.split('/').filter(|p| !p.is_empty()).collect();
+    let at = parts
+        .iter()
+        .rposition(|p| p.ends_with(".service") || p.ends_with(".scope"))?;
+    Some(format!("/{}", parts[..=at].join("/")))
+}
+
 impl fmt::Display for UnitId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.user {
@@ -193,6 +203,10 @@ mod tests {
         assert_eq!(
             UnitId::from_cgroup("/system.slice/docker-ab.scope/inner").unwrap().unit,
             "docker-ab.scope"
+        );
+        assert_eq!(
+            unit_cgroup("/system.slice/docker-ab.scope/inner").as_deref(),
+            Some("/system.slice/docker-ab.scope")
         );
         for skip in ["/init.scope", "/user.slice/user-1000.slice/user@1000.service/init.scope", "/system.slice", ""] {
             assert_eq!(UnitId::from_cgroup(skip), None, "{skip}");

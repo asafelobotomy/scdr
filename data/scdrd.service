@@ -12,6 +12,10 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 # Pause and role switches persist here (runtime.json).
 StateDirectory=scdr
+# What scdr has changed (ledger.json), so a restart after a crash can undo
+# it. Kept until reboot, which resets everything it records anyway.
+RuntimeDirectory=scdr
+RuntimeDirectoryPreserve=yes
 RestartSec=2s
 
 # Only what scdrd needs: change other processes' scheduling (SYS_NICE),

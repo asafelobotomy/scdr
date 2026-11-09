@@ -3,12 +3,21 @@
 //! the unit's original weights are restored when no one does. A weight the
 //! unit already sets itself (KDE ships baloo at CPUWeight=1) is never
 //! overridden, the same way scdr leaves values other tools set on threads.
+//!
+//! The `systemctl` work happens on a worker thread (see `unit_jobs`): this
+//! module decides, queues jobs and records their results.
 
+use super::unit_jobs::{self, UnitDone, UnitJob};
 use super::{Service, State};
 use crate::config::NamedProfile;
 use crate::procfs::ProcInfo;
 use crate::units::{self, UnitId, Weights};
 use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
+
+/// How long to leave a unit alone after `systemctl` failed on it, so a
+/// broken unit isn't retried on every scan and exec of its processes.
+const FAILED_BACKOFF: Duration = Duration::from_secs(60);
 
 /// Scopes are transient: once their processes exit, the unit is gone.
 fn forget_when_stopped(unit: &str) -> bool {
@@ -24,8 +33,17 @@ pub struct UnitState {
     pub profile: String,
     /// Weights the unit sets itself, which scdr left alone.
     pub kept: Weights,
+    /// The unit's own cgroup (not the claimant's, which may be nested).
     #[serde(skip)]
     cgroup: String,
+}
+
+/// Unit jobs waiting to be sent, in flight, or backing off after a failure.
+#[derive(Debug, Default)]
+pub struct UnitQueue {
+    outbox: Vec<UnitJob>,
+    in_flight: std::collections::BTreeSet<UnitId>,
+    failed: std::collections::BTreeMap<UnitId, Instant>,
 }
 
 impl Service {
@@ -36,66 +54,93 @@ impl Service {
             self.release_units_of(pid);
             return;
         };
-        let Some(id) = UnitId::from_cgroup(&info.cgroup) else {
+        let (Some(id), Some(cgroup)) = (UnitId::from_cgroup(&info.cgroup), units::unit_cgroup(&info.cgroup)) else {
             return;
         };
-
-        if let Some(st) = self.units.get(&id) {
-            if st.owner != pid && self.holds_claim(st.owner) {
+        if self.unit_queue.in_flight.contains(&id) {
+            return;
+        }
+        if let Some(&until) = self.unit_queue.failed.get(&id) {
+            if Instant::now() < until {
+                return;
+            }
+            self.unit_queue.failed.remove(&id);
+        }
+        let (cpu, io) = (profile.profile.cpu_weight, profile.profile.io_weight);
+        let known = match self.units.get_mut(&id) {
+            Some(st) if st.owner != pid && self.procs.get(&st.owner).is_some_and(|e| claims(&self.config, &e.state)) => {
                 return; // someone else in this unit already set its weights
             }
-        }
-
-        let original = match self.units.get(&id) {
-            Some(st) => st.original,
-            None => match units::get(&id) {
-                Ok(w) => w,
-                Err(e) => {
-                    tracing::warn!("{id}: can't read weights: {e}");
+            Some(st) => {
+                let (want, kept) = unit_jobs::plan(st.original, cpu, io);
+                if want == st.applied {
+                    st.owner = pid;
+                    st.profile = profile.name.clone();
+                    st.kept = kept;
                     return;
                 }
-            },
+                Some((st.original, st.applied))
+            }
+            None => None,
         };
-        // Only fill in weights the unit leaves at systemd's default.
-        let pick = |own: Option<u64>, profile: Option<u64>| own.or(profile);
-        let want = Weights {
-            cpu: pick(original.cpu, profile.profile.cpu_weight),
-            io: pick(original.io, profile.profile.io_weight),
-        };
-        let kept = Weights {
-            cpu: original.cpu.filter(|_| profile.profile.cpu_weight.is_some()),
-            io: original.io.filter(|_| profile.profile.io_weight.is_some()),
-        };
-        let current = self.units.get(&id).map(|s| s.applied).unwrap_or(original);
+        self.queue_unit_job(UnitJob::Claim {
+            id,
+            owner: pid,
+            profile: profile.name.clone(),
+            cgroup,
+            cpu,
+            io,
+            known,
+            dry_run: self.dry_run,
+        });
+    }
 
-        if want != current {
-            if self.dry_run {
-                tracing::info!("{id}: would set {want} (was {original})");
-            } else if let Err(e) = units::set(&id, &want, &current) {
-                tracing::warn!("{id}: can't set {want}: {e}");
-                return;
-            } else {
-                tracing::info!("{id}: set {want} for {} (was {original})", profile.name);
+    fn queue_unit_job(&mut self, job: UnitJob) {
+        let id = match &job {
+            UnitJob::Claim { id, .. } | UnitJob::Restore { id, .. } => id.clone(),
+        };
+        self.unit_queue.in_flight.insert(id);
+        self.unit_queue.outbox.push(job);
+    }
+
+    /// Jobs for the worker; the main loop sends them once the lock is released.
+    pub fn take_unit_jobs(&mut self) -> Vec<UnitJob> {
+        std::mem::take(&mut self.unit_queue.outbox)
+    }
+
+    /// Runs queued jobs here and now (`--once`, and shutdown).
+    pub fn run_unit_jobs_now(&mut self) {
+        while !self.unit_queue.outbox.is_empty() {
+            for job in self.take_unit_jobs() {
+                self.unit_done(unit_jobs::run(job));
             }
         }
-        self.units.insert(
-            id,
-            UnitState {
-                original,
-                applied: want,
-                owner: pid,
-                profile: profile.name.clone(),
-                kept,
-                cgroup: info.cgroup.clone(),
-            },
-        );
+    }
+
+    /// A job's result, from the worker.
+    pub fn unit_done(&mut self, done: UnitDone) {
+        match done {
+            UnitDone::Claimed { id, owner, profile, cgroup, original, applied, kept } => {
+                self.unit_queue.in_flight.remove(&id);
+                self.units.insert(id.clone(), UnitState { original, applied, owner, profile, kept, cgroup });
+                // The claimant may have exited or lost its profile meanwhile.
+                if !self.holds_claim(owner) {
+                    self.restore_unit(&id);
+                }
+            }
+            UnitDone::Failed { id, error } => {
+                tracing::warn!("{id}: {error}; retrying in {}s", FAILED_BACKOFF.as_secs());
+                self.unit_queue.in_flight.remove(&id);
+                self.unit_queue.failed.insert(id, Instant::now() + FAILED_BACKOFF);
+            }
+            UnitDone::Restored { id } => {
+                self.unit_queue.in_flight.remove(&id);
+            }
+        }
     }
 
     fn holds_claim(&self, pid: u32) -> bool {
-        self.procs.get(&pid).is_some_and(|e| match &e.state {
-            State::Managed(m) => self.config.profiles.get(&m.profile).is_some_and(|p| p.profile.has_unit_weights()),
-            _ => false,
-        })
+        self.procs.get(&pid).is_some_and(|e| claims(&self.config, &e.state))
     }
 
     /// `pid` no longer wants unit weights: restore any unit it held.
@@ -114,6 +159,8 @@ impl Service {
     /// After a rescan: forget units that no longer exist, restore units
     /// whose claimant is gone.
     pub(super) fn sweep_units(&mut self) {
+        let now = Instant::now();
+        self.unit_queue.failed.retain(|_, until| *until > now);
         let ids: Vec<UnitId> = self.units.keys().cloned().collect();
         for id in ids {
             let st = &self.units[&id];
@@ -146,15 +193,12 @@ impl Service {
         if self.dry_run || st.applied == st.original {
             return;
         }
-        // Only undo our own change; leave it if someone set something else since.
-        match units::get(id) {
-            Ok(now) if now == st.applied => match units::set(id, &st.original, &now) {
-                Ok(()) => tracing::info!("{id}: restored {}", st.original),
-                Err(e) => tracing::warn!("{id}: can't restore {}: {e}", st.original),
-            },
-            Ok(now) => tracing::info!("{id}: left as {now} (changed by something else)"),
-            Err(_) => {} // unit is gone
-        }
+        self.queue_unit_job(UnitJob::Restore {
+            id: id.clone(),
+            original: st.original,
+            applied: st.applied,
+            dry_run: self.dry_run,
+        });
     }
 
     /// The unit claim covering `pid`'s unit, for `explain`.
@@ -167,6 +211,14 @@ impl Service {
     /// Units whose weights scdr actually changed.
     pub(super) fn unit_count(&self) -> usize {
         self.units.values().filter(|s| s.applied != s.original).count()
+    }
+}
+
+/// Whether a process in `state` holds unit weights.
+fn claims(config: &crate::config::Config, state: &State) -> bool {
+    match state {
+        State::Managed(m) => config.profiles.get(&m.profile).is_some_and(|p| p.profile.has_unit_weights()),
+        _ => false,
     }
 }
 
