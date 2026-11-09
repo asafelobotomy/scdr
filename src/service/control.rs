@@ -172,7 +172,10 @@ impl Service {
             paused: self.paused,
             roles_off: self.roles_off.iter().map(|r| r.to_string()).collect(),
         };
-        if let Err(e) = std::fs::write(&path, serde_json::to_string_pretty(&rt).unwrap_or_default()) {
+        // Write then rename, so a crash mid-write can't leave it empty.
+        let tmp = path.with_extension("json.tmp");
+        let text = serde_json::to_string_pretty(&rt).unwrap_or_default();
+        if let Err(e) = std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, &path)) {
             tracing::warn!("can't save {}: {e}", path.display());
         }
     }

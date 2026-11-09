@@ -9,7 +9,7 @@ use crate::config::{NamedProfile, Role};
 use crate::procfs::ProcInfo;
 use crate::units::UnitId;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct Session {
@@ -17,8 +17,9 @@ pub(super) struct Session {
     pub uid: u32,
     /// cgroup path of the focused app's unit, and the window's pid.
     pub foreground: Option<(String, u32)>,
-    pub audio: BTreeSet<u32>,
-    pub games: BTreeSet<u32>,
+    /// pid -> start time, so a reused pid doesn't inherit the role.
+    pub audio: BTreeMap<u32, u64>,
+    pub games: BTreeMap<u32, u64>,
 }
 
 /// One session's live state, for `status`.
@@ -48,7 +49,9 @@ impl Service {
         let session = self.session(uid, sender);
         let old = std::mem::replace(&mut session.foreground, new.clone());
         let mut affected = Vec::new();
-        if first && self.pressure_active {
+        // (Only once a focused app is known: focus on a desktop window
+        // places nothing, so re-checking every app then is wasted work.)
+        if first && new.is_some() && self.pressure_active {
             affected.extend(cgroup_pids(app_slice(uid).trim_end_matches('/')));
         } else if old.as_ref().map(|o| &o.0) == new.as_ref().map(|n| &n.0) {
             return Ok(()); // same app, another window
@@ -64,7 +67,7 @@ impl Service {
         let pids = owned_pids(uid, pids);
         let session = self.session(uid, sender);
         let old = std::mem::replace(&mut session.audio, pids.clone());
-        self.reevaluate(old.symmetric_difference(&pids).copied().collect());
+        self.reevaluate(changed(&old, &pids));
         Ok(())
     }
 
@@ -72,7 +75,7 @@ impl Service {
         let pids = owned_pids(uid, pids);
         let session = self.session(uid, sender);
         let old = std::mem::replace(&mut session.games, pids.clone());
-        self.reevaluate(old.symmetric_difference(&pids).copied().collect());
+        self.reevaluate(changed(&old, &pids));
         Ok(())
     }
 
@@ -87,7 +90,7 @@ impl Service {
             return;
         };
         tracing::info!("session agent {sender} (uid {}) went away", s.uid);
-        let mut affected: Vec<u32> = s.audio.into_iter().chain(s.games).collect();
+        let mut affected: Vec<u32> = s.audio.into_keys().chain(s.games.into_keys()).collect();
         if let Some((cgroup, _)) = s.foreground {
             affected.extend(cgroup_pids(&cgroup));
         }
@@ -131,8 +134,8 @@ impl Service {
         });
         let active = |role: Role| -> bool {
             match role {
-                Role::Game => sessions.iter().any(|s| s.games.contains(&info.pid)),
-                Role::Audio => sessions.iter().any(|s| s.audio.contains(&info.pid)),
+                Role::Game => sessions.iter().any(|s| s.games.get(&info.pid) == Some(&info.start_time)),
+                Role::Audio => sessions.iter().any(|s| s.audio.get(&info.pid) == Some(&info.start_time)),
                 Role::Foreground => focused,
                 // Never the focused app, even with the foreground role off.
                 Role::Background => {
@@ -164,8 +167,8 @@ impl Service {
                     let unit = UnitId::from_cgroup(cg).map(|u| u.unit).unwrap_or_else(|| cg.clone());
                     format!("{unit} (window pid {pid})")
                 }),
-                audio: s.audio.iter().copied().collect(),
-                games: s.games.iter().copied().collect(),
+                audio: s.audio.keys().copied().collect(),
+                games: s.games.keys().copied().collect(),
             })
             .collect();
         out.sort_by_key(|s| s.uid);
@@ -181,7 +184,7 @@ impl Service {
     fn role_pids(&self) -> Vec<u32> {
         let mut pids = Vec::new();
         for s in self.sessions.values() {
-            pids.extend(s.audio.iter().chain(&s.games));
+            pids.extend(s.audio.keys().chain(s.games.keys()));
             if let Some((cg, _)) = &s.foreground {
                 pids.extend(cgroup_pids(cg));
             }
@@ -229,11 +232,24 @@ fn owned_process(uid: u32, pid: u32) -> Result<ProcInfo, String> {
     Ok(info)
 }
 
-/// Drops pids the caller doesn't own (or that don't exist).
-fn owned_pids(uid: u32, pids: Vec<u32>) -> BTreeSet<u32> {
+/// The caller's own pids (others, and ones that don't exist, are dropped),
+/// with each process's start time.
+fn owned_pids(uid: u32, pids: Vec<u32>) -> BTreeMap<u32, u64> {
     pids.into_iter()
-        .filter(|&pid| owned_process(uid, pid).is_ok())
+        .filter_map(|pid| owned_process(uid, pid).ok().map(|i| (pid, i.start_time)))
         .collect()
+}
+
+/// Pids whose role starts or ends between two reports.
+fn changed(old: &BTreeMap<u32, u64>, new: &BTreeMap<u32, u64>) -> Vec<u32> {
+    let mut pids: Vec<u32> = old
+        .iter()
+        .filter(|(p, t)| new.get(p) != Some(t))
+        .chain(new.iter().filter(|(p, t)| old.get(p) != Some(t)))
+        .map(|(p, _)| *p)
+        .collect();
+    pids.dedup();
+    pids
 }
 
 /// Every process in a cgroup and its children.
@@ -260,14 +276,24 @@ mod tests {
     #[test]
     fn agents_of_one_user_keep_their_own_sessions() {
         let mut svc = Service::new(Config::from_sources(Vec::new()).unwrap(), true);
-        svc.session(1000, ":1.10").games.insert(4242);
-        svc.session(1000, ":1.20").audio.insert(4343);
+        svc.session(1000, ":1.10").games.insert(4242, 7);
+        svc.session(1000, ":1.20").audio.insert(4343, 8);
         assert_eq!(svc.sessions.len(), 2);
         // The second agent leaving doesn't take the first one's state with it.
         svc.drop_agent(":1.20");
         assert_eq!(svc.agent_senders(), vec![":1.10".to_owned()]);
-        assert!(svc.sessions[":1.10"].games.contains(&4242));
+        assert!(svc.sessions[":1.10"].games.contains_key(&4242));
         svc.drop_agent(":1.99"); // unknown names are ignored
         assert_eq!(svc.sessions.len(), 1);
+    }
+
+    #[test]
+    fn a_reused_pid_counts_as_a_change() {
+        let old = [(10, 1), (11, 1)].into_iter().collect();
+        let new = [(10, 1), (11, 2), (12, 1)].into_iter().collect();
+        let mut got = super::changed(&old, &new);
+        got.sort_unstable();
+        got.dedup();
+        assert_eq!(got, vec![11, 12]);
     }
 }

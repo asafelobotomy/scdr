@@ -28,6 +28,15 @@ impl Service {
 
     fn apply_autogroup(&mut self) {
         let Some(want) = self.config.system.autogroup else {
+            // Dropped from the config by a reload: put back what we changed.
+            if let Some(orig) = self.autogroup_original.take() {
+                if !self.dry_run {
+                    match system::set_autogroup(orig) {
+                        Ok(()) => tracing::info!("restored sched_autogroup_enabled={}", orig as u8),
+                        Err(e) => tracing::warn!("could not restore sched_autogroup_enabled: {e}"),
+                    }
+                }
+            }
             return;
         };
         let current = system::autogroup();

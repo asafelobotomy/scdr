@@ -31,10 +31,21 @@ pub struct Daemon {
 
 #[zbus::interface(name = "org.scdr.Daemon1")]
 impl Daemon {
-    /// Why a process has (or doesn't have) the priorities it has.
-    fn explain(&self, pid: u32) -> String {
-        let ex = self.service.lock().unwrap().explain(pid);
-        serde_json::to_string(&ex).unwrap_or_default()
+    /// Why a process has (or doesn't have) the priorities it has. Another
+    /// user's command line can hold secrets and /proc may hide it
+    /// (hidepid), so only root or the process's owner gets it.
+    async fn explain(
+        &self,
+        pid: u32,
+        #[zbus(header)] header: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> zbus::fdo::Result<String> {
+        let (uid, _) = caller(&header, conn).await?;
+        let mut ex = self.service.lock().unwrap().explain(pid);
+        if uid != 0 && ex.uid != Some(uid) {
+            ex.cmdline = None;
+        }
+        Ok(serde_json::to_string(&ex).unwrap_or_default())
     }
 
     fn status(&self) -> String {

@@ -156,9 +156,12 @@ pub fn notes(p: &Profile) -> Vec<String> {
     if let Some(scx) = system::sched_ext().filter(SchedExt::is_active) {
         let name = scx.ops.as_deref().unwrap_or("a sched_ext scheduler");
         if p.slice_us.is_some() || p.sched.is_some() || p.nice.is_some() {
-            notes.push(format!(
-                "{name} is active: slice_us is ignored and nice/policy handling depends on it"
-            ));
+            notes.push(if name == "devbox" {
+                // scx_devbox reads all three (see scx_devbox/README.md).
+                format!("{name} is active: nice weights it, batch/idle policy sends it to the batch queue, slice_us marks it latency-sensitive")
+            } else {
+                format!("{name} is active: slice_us is ignored and nice/policy handling depends on it")
+            });
         }
     }
     if p.io_weight.is_some() {

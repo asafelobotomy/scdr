@@ -19,7 +19,7 @@ mod units;
 
 use lineage::hand_tuned;
 
-use crate::apply::{Outcome, Snapshot};
+use crate::apply::{self, Outcome, Snapshot};
 use crate::config::Config;
 use crate::procfs::{self, ProcInfo};
 use crate::rules::Rule;
@@ -179,20 +179,28 @@ impl Service {
                         .get(&parent_tgid)
                         .and_then(|p| p.sticky.clone());
                     self.procs.insert(child_pid, Entry::new(parent_tgid, sticky));
+                } else {
+                    self.new_thread(child_tgid, child_pid);
                 }
                 None
             }
-            Event::Exec { pid, tgid } if pid == tgid => {
-                self.evaluate(pid, Trigger::Exec);
-                let start = self.procs.get(&pid)?.start_time;
-                (self.config.system.exec_recheck_ms > 0).then_some((pid, start))
+            // A non-leader thread that execs takes over the process (de_thread):
+            // it is the same process with a new program.
+            Event::Exec { tgid, .. } => {
+                self.evaluate(tgid, Trigger::Exec);
+                let start = self.procs.get(&tgid)?.start_time;
+                (self.config.system.exec_recheck_ms > 0).then_some((tgid, start))
             }
             Event::Comm { pid, tgid } if pid == tgid => {
                 self.evaluate(pid, Trigger::Comm);
                 None
             }
+            // The leader thread exiting ends the process only once it has no
+            // other threads; until then it is a zombie leader with live ones.
             Event::Exit { pid, tgid } if pid == tgid => {
-                self.procs.remove(&pid);
+                if procfs::tids(pid).len() <= 1 {
+                    self.procs.remove(&pid);
+                }
                 None
             }
             Event::Overrun => {
@@ -205,6 +213,21 @@ impl Service {
                 None
             }
             _ => None,
+        }
+    }
+
+    /// A managed process started a thread. Threads inherit their creator's
+    /// settings, except a realtime policy: scdr sets RESET_ON_FORK with it
+    /// (so children don't run away realtime), which also resets new
+    /// threads. Give those the target now rather than at the next scan.
+    fn new_thread(&mut self, tgid: u32, tid: u32) {
+        if self.dry_run {
+            return;
+        }
+        if let Some(State::Managed(m)) = self.procs.get(&tgid).map(|e| &e.state) {
+            if m.target.task.cpu.is_realtime() {
+                apply::apply_tid(tid, &m.target, &[m.original, m.target]);
+            }
         }
     }
 

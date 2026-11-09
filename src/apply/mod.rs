@@ -208,6 +208,11 @@ pub fn apply(pid: u32, target: &Snapshot, owned: &[Snapshot], dry_run: bool) -> 
     out
 }
 
+/// Moves one thread to `target` (see [`apply`]).
+pub fn apply_tid(tid: u32, target: &Snapshot, owned: &[Snapshot]) -> Outcome {
+    apply_threads(&[tid], target, owned, false)
+}
+
 /// `sched_getattr` always reports a fair task's slice, so a default slice
 /// can't be told apart from a custom one by value. scdr only cares about
 /// slices it sets: the target's (when non-zero), or clearing one it set before.
@@ -279,10 +284,15 @@ fn apply_threads(tids: &[u32], target: &Snapshot, owned: &[Snapshot], dry_run: b
                 priority: t.priority,
                 nice: t.nice,
                 runtime: t.slice_ns,
+                // Realtime targets reset on fork. Leaving realtime that scdr
+                // set clears the flag it added with it; otherwise keep what
+                // the thread had (an app may have set it on purpose).
                 flags: if t.is_realtime() {
                     sched::SCHED_FLAG_RESET_ON_FORK
-                } else {
+                } else if owned.iter().any(|o| o.task.cpu.is_realtime()) {
                     0
+                } else {
+                    attr.flags & sched::SCHED_FLAG_RESET_ON_FORK
                 },
                 ..attr
             };
