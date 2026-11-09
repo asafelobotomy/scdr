@@ -36,7 +36,8 @@ pub fn inventory(supported: Vec<(String, Vec<u32>)>) -> Vec<SchedulerInfo> {
         .collect()
 }
 
-fn on_path(bin: &str) -> bool {
+/// Whether an executable of this name is in `$PATH` (or /usr/bin).
+pub fn on_path(bin: &str) -> bool {
     let path = std::env::var_os("PATH").unwrap_or_else(|| "/usr/local/bin:/usr/bin".into());
     std::env::split_paths(&path).any(|dir| dir.join(bin).is_file()) || Path::new("/usr/bin").join(bin).is_file()
 }

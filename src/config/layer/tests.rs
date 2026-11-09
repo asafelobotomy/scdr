@@ -69,3 +69,36 @@ fn writes_validated_layer_and_removes_it_when_empty() {
     paths.write_layer(&json!({"pressure": {}})).unwrap();
     assert!(!paths.layer().exists());
 }
+
+#[test]
+fn rejects_oversized_documents() {
+    let paths = tree("big", SHARE, None);
+    let big = json!({"exceptions": {"name": vec!["x".repeat(1000); 300]}});
+    let e = paths.write_layer(&big).unwrap_err().to_string();
+    assert!(e.contains("limit"), "{e}");
+    assert!(!paths.layer().exists());
+}
+
+#[test]
+fn strips_only_the_widgets_source_annotation() {
+    let paths = tree("meta", SHARE, None);
+    let ok = json!({
+        "profile": {"p": {"nice": 3, "_source": "/etc/x.toml"}},
+        "rule": [{"profile": "p", "name": "x", "_source": "/etc/x.toml"}],
+    });
+    paths.write_layer(&ok).unwrap();
+    let text = std::fs::read_to_string(paths.layer()).unwrap();
+    assert!(!text.contains("_source"), "{text}");
+    // Other underscore keys are no longer dropped silently; they reach the validator.
+    let other = json!({"rule": [{"profile": "fg", "name": "x", "_other": 1}]});
+    assert!(paths.write_layer(&other).is_err());
+    let nested = json!({"exceptions": {"_source": ["x"]}});
+    assert!(paths.write_layer(&nested).is_err());
+    let dir = paths.layer().parent().unwrap().to_owned();
+    let stray = std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+        .count();
+    assert_eq!(stray, 0);
+}

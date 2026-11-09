@@ -2,9 +2,22 @@
 
 use crate::{ImportFrom, PathArgs};
 use anyhow::Context;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-pub fn import(from: ImportFrom, output: Option<PathBuf>, paths: &PathArgs) -> anyhow::Result<()> {
+/// Writes `text` to `path`, refusing to replace an existing file unless `force`.
+fn write_new(path: &Path, text: &str, force: bool) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true);
+    if force {
+        opts.create(true).truncate(true);
+    } else {
+        opts.create_new(true);
+    }
+    opts.open(path)?.write_all(text.as_bytes())
+}
+
+pub fn import(from: ImportFrom, output: Option<PathBuf>, force: bool, paths: &PathArgs) -> anyhow::Result<()> {
     // Imported rules go first, so by default skip names our rules already cover.
     let current = paths.load().ok();
     let imp = match from {
@@ -25,7 +38,10 @@ pub fn import(from: ImportFrom, output: Option<PathBuf>, paths: &PathArgs) -> an
 
     let toml = imp.to_toml();
     match &output {
-        Some(path) => std::fs::write(path, &toml).with_context(|| format!("writing {}", path.display()))?,
+        Some(path) if !force && path.exists() => {
+            anyhow::bail!("{} already exists; pass --force to overwrite it", path.display())
+        }
+        Some(path) => write_new(path, &toml, force).with_context(|| format!("writing {}", path.display()))?,
         None => print!("{toml}"),
     }
     eprintln!(

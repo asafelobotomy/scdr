@@ -9,7 +9,17 @@
 
 use super::{Config, ConfigError, Paths};
 use serde_json::{Map, Value};
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Largest settings document `write_layer` accepts, as serialized JSON.
+pub const MAX_DOCUMENT_BYTES: usize = 256 * 1024;
+
+/// Serialises writers within the process (the file is replaced as a whole).
+static WRITE_LOCK: Mutex<()> = Mutex::new(());
+static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub const LAYER_FILE: &str = "settings.toml";
 
@@ -50,6 +60,14 @@ impl Paths {
     /// Returns the resulting config.
     pub fn write_layer(&self, doc: &Value) -> Result<Config, ConfigError> {
         let path = self.layer();
+        let size = doc.to_string().len();
+        if size > MAX_DOCUMENT_BYTES {
+            return Err(ConfigError::invalid(
+                &path,
+                format!("settings document is {size} bytes; the limit is {MAX_DOCUMENT_BYTES}"),
+            ));
+        }
+        let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let text = to_toml(doc).map_err(|e| ConfigError::invalid(&path, e))?;
         let mut sources = Vec::new();
         for file in self.lower_files() {
@@ -67,9 +85,24 @@ impl Paths {
                 _ => {}
             }
         } else {
-            let tmp = path.with_extension("toml.new");
-            std::fs::write(&tmp, format!("{HEADER}{text}")).map_err(io)?;
-            std::fs::rename(&tmp, &path).map_err(io)?;
+            let dir = path.parent().unwrap_or(Path::new("."));
+            let tmp = dir.join(format!(
+                ".{LAYER_FILE}.{}.{}.tmp",
+                std::process::id(),
+                TMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            let write = || -> std::io::Result<()> {
+                let mut f = std::fs::File::create(&tmp)?;
+                f.write_all(HEADER.as_bytes())?;
+                f.write_all(text.as_bytes())?;
+                f.sync_all()?;
+                std::fs::rename(&tmp, &path)?;
+                std::fs::File::open(dir)?.sync_all()
+            };
+            if let Err(e) = write() {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(io(e));
+            }
         }
         Ok(config)
     }
@@ -142,10 +175,32 @@ fn table<'a>(m: &'a mut Map<String, Value>, key: &str) -> &'a mut Map<String, Va
     v.as_object_mut().unwrap()
 }
 
-/// JSON to TOML, dropping nulls, empty tables and `_`-prefixed keys (the
-/// annotations `base_document` adds). An empty document becomes "".
+/// The `_source` annotation `base_document` puts on each profile and rule;
+/// the widget sends it back with the entries it edits.
+const META_KEY: &str = "_source";
+
+/// Removes the widget's metadata: `_source` on each profile and each rule,
+/// and nowhere else.
+fn strip_metadata(doc: &Value) -> Value {
+    let mut doc = doc.clone();
+    let strip = |v: &mut Value| {
+        if let Value::Object(m) = v {
+            m.remove(META_KEY);
+        }
+    };
+    if let Some(Value::Object(profiles)) = doc.get_mut("profile") {
+        profiles.values_mut().for_each(strip);
+    }
+    if let Some(Value::Array(rules)) = doc.get_mut("rule") {
+        rules.iter_mut().for_each(strip);
+    }
+    doc
+}
+
+/// JSON to TOML, dropping nulls, empty tables and the widget's metadata.
+/// An empty document becomes "".
 fn to_toml(doc: &Value) -> Result<String, String> {
-    let Some(clean) = clean(doc) else { return Ok(String::new()) };
+    let Some(clean) = clean(&strip_metadata(doc)) else { return Ok(String::new()) };
     if !clean.is_object() {
         return Err("settings must be a table".into());
     }
@@ -159,7 +214,6 @@ fn clean(v: &Value) -> Option<Value> {
         Value::Object(m) => {
             let m: Map<String, Value> = m
                 .iter()
-                .filter(|(k, _)| !k.starts_with('_'))
                 .filter_map(|(k, v)| Some((k.clone(), clean(v)?)))
                 .collect();
             (!m.is_empty()).then_some(Value::Object(m))

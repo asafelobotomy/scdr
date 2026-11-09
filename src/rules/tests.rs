@@ -119,3 +119,44 @@ fn exceptions_and_launchers() {
     assert_eq!(c.exceptions.launcher(&proc("chrt", "/usr/bin/chrt", "")), Some("chrt"));
     assert!(c.exceptions.launcher(&proc("bash", "/usr/bin/bash", "")).is_none());
 }
+
+#[test]
+fn ancestor_and_parent_match_the_exe_name_beyond_comm_truncation() {
+    use super::{Ancestor, Lineage};
+    let c = rules(
+        r#"
+        [[rule]]
+        profile = "a"
+        ancestor = "plasma-browser-integration-host"
+        [[rule]]
+        profile = "b"
+        parent = "very-long-launcher-name"
+        "#,
+    );
+    let long = |comm: &str, exe: &str| Ancestor { comm: comm.into(), exe: Some(exe.into()) };
+    let p = proc("child", "/usr/bin/child", "");
+    let mut lin = Lineage::known_with_exe(vec![
+        long("very-long-launc", "very-long-launcher-name"),
+        long("plasma-browser", "plasma-browser-integration-host"),
+    ]);
+    assert_eq!(c.rules.find_with(&p, &mut lin).unwrap().profile, "a");
+    let mut lin = Lineage::known_with_exe(vec![long("very-long-launc", "very-long-launcher-name")]);
+    assert_eq!(c.rules.find_with(&p, &mut lin).unwrap().profile, "b");
+    // Without an exe name only the truncated comm is known.
+    let mut lin = Lineage::known(vec!["very-long-launc".into()]);
+    assert!(c.rules.find_with(&p, &mut lin).is_none());
+}
+
+#[test]
+fn warns_about_literal_names_longer_than_comm() {
+    let c = rules(
+        r#"
+        [[rule]]
+        profile = "a"
+        parent = ["plasma-browser-integration-host", "short", "glob-pattern-that-is-long*"]
+        "#,
+    );
+    let w = c.rules.warnings();
+    assert_eq!(w.len(), 1, "{w:?}");
+    assert!(w[0].contains("plasma-browser-integration-host") && w[0].contains("rule #1"), "{w:?}");
+}

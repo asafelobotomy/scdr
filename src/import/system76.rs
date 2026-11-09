@@ -9,6 +9,7 @@
 //! - exceptions become `[exceptions]`; `include descends=` become launchers
 
 use super::{Import, Value, glob_literal, quote};
+use crate::config::valid_nice;
 use kdl::{KdlDocument, KdlEntry, KdlNode};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -71,7 +72,7 @@ pub fn import(paths: &[PathBuf]) -> anyhow::Result<Import> {
             continue;
         }
         let profile = format!("s76-{name}");
-        imp.profile(&profile, p.fields.into_iter().collect());
+        let profile = imp.profile(&profile, p.fields.into_iter().collect());
         for mut rule in p.rules {
             for (key, values) in &p.excludes {
                 rule.push((key.clone(), values.clone()));
@@ -141,7 +142,7 @@ fn settings(entries: &[KdlEntry], skipped: &mut Vec<String>, what: &str) -> Vec<
         let ty = e.ty().map(|t| t.value());
         let v = e.value();
         let field = match (key, ty) {
-            ("nice", _) => v.as_integer().filter(|n| (-20..=19).contains(n)).map(|n| ("nice", n.to_string())),
+            ("nice", _) => v.as_integer().filter(|n| i64::try_from(*n).is_ok_and(valid_nice)).map(|n| ("nice", n.to_string())),
             ("sched", None) => match v.as_string() {
                 Some(s @ ("batch" | "idle" | "other")) => Some(("sched", quote(s))),
                 _ => None,

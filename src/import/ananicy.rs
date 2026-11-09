@@ -5,6 +5,7 @@
 //! get a profile inheriting their type. Later definitions win, as in ananicy.
 
 use super::{Import, Value, glob_literal, quote};
+use crate::config::{valid_nice, valid_oom_score_adj};
 use serde_json::{Map, Value as Json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -45,6 +46,7 @@ pub fn import(dir: &Path, only: &[String], covered: &dyn Fn(&str) -> bool) -> an
     }
 
     let mut grouped: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut type_profiles: BTreeMap<String, String> = BTreeMap::new();
     let mut overlaps = 0;
     let mut filtered = 0;
     for (name, (ty, own)) in &rules {
@@ -60,17 +62,16 @@ pub fn import(dir: &Path, only: &[String], covered: &dyn Fn(&str) -> bool) -> an
             imp.skipped.push(format!("{name}: unknown type {t:?}"));
             continue;
         }
-        let parent = ty.as_deref().map(|t| ensure_type(&mut imp, t, &types[t]));
+        let parent = ty.as_deref().map(|t| ensure_type(&mut imp, &mut type_profiles, t, &types[t]));
         let fields = convert(own, &mut imp.skipped, name);
         match (parent, fields.is_empty()) {
             (Some(parent), true) => grouped.entry(parent).or_default().push(glob_literal(name)),
             (parent, false) => {
-                let profile = format!("ananicy-{}", slug(name));
                 let mut fields = fields;
                 if let Some(p) = parent {
                     fields.insert(0, ("inherit".into(), quote(&p)));
                 }
-                imp.profile(&profile, fields);
+                let profile = imp.profile(&format!("ananicy-{}", slug(name)), fields);
                 imp.rule(&profile, vec![("name".into(), vec![glob_literal(name)])]);
             }
             (None, true) => imp.skipped.push(format!("{name}: no type and no settings")),
@@ -100,14 +101,20 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
     Ok(())
 }
 
-fn ensure_type(imp: &mut Import, ty: &str, settings: &Map<String, Json>) -> String {
-    let name = format!("ananicy-{}", slug(ty));
-    if !imp.has_profile(&name) {
-        let mut skipped = Vec::new();
-        let fields = convert(settings, &mut skipped, ty);
-        imp.skipped.extend(skipped);
-        imp.profile(&name, fields);
+fn ensure_type(
+    imp: &mut Import,
+    made: &mut BTreeMap<String, String>,
+    ty: &str,
+    settings: &Map<String, Json>,
+) -> String {
+    if let Some(name) = made.get(ty) {
+        return name.clone();
     }
+    let mut skipped = Vec::new();
+    let fields = convert(settings, &mut skipped, ty);
+    imp.skipped.extend(skipped);
+    let name = imp.profile(&format!("ananicy-{}", slug(ty)), fields);
+    made.insert(ty.to_owned(), name.clone());
     name
 }
 
@@ -115,8 +122,10 @@ fn ensure_type(imp: &mut Import, ty: &str, settings: &Map<String, Json>) -> Stri
 fn convert(obj: &Map<String, Json>, skipped: &mut Vec<String>, what: &str) -> Vec<(String, Value)> {
     let mut f = Vec::new();
     let int = |k: &str| obj.get(k).and_then(Json::as_i64);
-    if let Some(n) = int("nice").filter(|n| (-20..=19).contains(n)) {
-        f.push(("nice".into(), n.to_string()));
+    match int("nice") {
+        Some(n) if valid_nice(n) => f.push(("nice".into(), n.to_string())),
+        Some(n) => skipped.push(format!("{what}: nice={n} is outside -20..19, dropped")),
+        None => {}
     }
     match obj.get("sched").and_then(Json::as_str) {
         Some("normal" | "other") => f.push(("sched".into(), quote("other"))),
@@ -139,8 +148,10 @@ fn convert(obj: &Map<String, Json>, skipped: &mut Vec<String>, what: &str) -> Ve
     if let Some(io) = io {
         f.push(("io".into(), quote(&io)));
     }
-    if let Some(o) = int("oom_score_adj").filter(|o| (-1000..=1000).contains(o)) {
-        f.push(("oom_score_adj".into(), o.to_string()));
+    match int("oom_score_adj") {
+        Some(o) if valid_oom_score_adj(o) => f.push(("oom_score_adj".into(), o.to_string())),
+        Some(o) => skipped.push(format!("{what}: oom_score_adj={o} is outside -1000..1000, dropped")),
+        None => {}
     }
     for key in ["latency_nice", "cgroup", "cpuset", "name_regex"] {
         if obj.contains_key(key) {
@@ -161,6 +172,36 @@ fn slug(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colliding_slugs_and_type_names_get_distinct_profiles() {
+        let dir = std::env::temp_dir().join(format!("scdr-ananicy-dup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("a.types"),
+            "{ \"type\": \"foo-exe\", \"nice\": 3 }\n{ \"type\": \"Bad\", \"nice\": 99, \"oom_score_adj\": 5000 }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("a.rules"),
+            "{ \"name\": \"foo.exe\", \"nice\": 1 }\n{ \"name\": \"foo-exe\", \"nice\": 2 }\n\
+             { \"name\": \"x\", \"type\": \"foo-exe\", \"nice\": 7 }\n{ \"name\": \"y\", \"type\": \"Bad\" }\n",
+        )
+        .unwrap();
+        let imp = import(&dir, &[], &|_| false).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        let c = imp.validate(&[]).unwrap();
+        let find = |n: &str| c.rules.find(&super::super::synthetic(n)).map(|r| r.profile.clone()).unwrap();
+        let (a, b, x) = (find("foo.exe"), find("foo-exe"), find("x"));
+        assert_ne!(a, b);
+        assert_eq!(c.profiles[&a].profile.nice, Some(1));
+        assert_eq!(c.profiles[&b].profile.nice, Some(2));
+        assert_eq!(c.profiles[&x].profile.nice, Some(7));
+        assert_eq!(c.profiles[&x].chain.len(), 2, "inherits its type, not a rule's profile");
+        assert_eq!(c.profiles[&c.profiles[&x].chain[0]].profile.nice, Some(3));
+        let skipped = imp.skipped.join("\n");
+        assert!(skipped.contains("nice=99") && skipped.contains("oom_score_adj=5000"), "{skipped}");
+    }
 
     #[test]
     fn converts_types_rules_and_overrides() {

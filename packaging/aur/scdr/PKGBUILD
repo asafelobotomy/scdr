@@ -10,6 +10,7 @@ license=('MPL-2.0')
 depends=('libgcc' 'glibc' 'dbus' 'systemd')
 optdepends=('scx-scheds: sched_ext schedulers ([sched_ext])'
             'scx-tools: scx_loader, which scdr drives ([sched_ext])'
+            'scx-devbox: sched_ext scheduler that follows scdr profiles'
             'pipewire: audio-client role (pw-dump)'
             'gamemode: game role'
             'power-profiles-daemon: per-power-profile roles')

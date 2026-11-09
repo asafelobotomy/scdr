@@ -53,6 +53,16 @@ impl Profile {
     }
 }
 
+/// `nice` values the kernel accepts.
+pub fn valid_nice(n: i64) -> bool {
+    (-20..=19).contains(&n)
+}
+
+/// `oom_score_adj` values the kernel accepts.
+pub fn valid_oom_score_adj(o: i64) -> bool {
+    (-1000..=1000).contains(&o)
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct NamedProfile {
     pub name: String,
@@ -140,7 +150,7 @@ fn parse_profile(name: &str, path: &Path, rp: &RawProfile) -> Result<Profile, Co
     let err = |m: String| ConfigError::invalid(path, format!("profile {name:?}: {m}"));
 
     if let Some(n) = rp.nice {
-        if !(-20..=19).contains(&n) {
+        if !valid_nice(i64::from(n)) {
             return Err(err(format!("nice must be -20..19, got {n}")));
         }
     }
@@ -152,7 +162,7 @@ fn parse_profile(name: &str, path: &Path, rp: &RawProfile) -> Result<Profile, Co
         }
     }
     if let Some(o) = rp.oom_score_adj {
-        if !(-1000..=1000).contains(&o) {
+        if !valid_oom_score_adj(i64::from(o)) {
             return Err(err(format!("oom_score_adj must be -1000..1000, got {o}")));
         }
     }
