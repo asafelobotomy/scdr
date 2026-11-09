@@ -1,0 +1,20 @@
+[Unit]
+Description=scx_devbox sched_ext scheduler (low-end dev boxes with LLM agents)
+Documentation=file:///usr/local/share/doc/scx_devbox/README.md
+# Only one sched_ext scheduler can run; don't fight scx_loader-started ones.
+Conflicts=scx.service
+After=scdrd.service
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=@BINDIR@/scx_devbox
+# If the kernel ejects the scheduler (stall, error) the loader exits 1 and the
+# system is already back on EEVDF; retry a few times, then stay on EEVDF.
+Restart=on-failure
+RestartSec=5
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

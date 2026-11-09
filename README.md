@@ -61,6 +61,12 @@ benchmark. Packaged for the AUR (`packaging/aur`).
   through scx_loader (gaming, then power profile, then default) and backs
   off if you switch by hand; `[eevdf]` sets the kernel's base slice and
   preemption mode, per power profile, while no sched_ext scheduler runs.
+- [`scx_devbox/`](scx_devbox/README.md): a sched_ext scheduler of its own for
+  low-end machines doing development with LLM agent apps. It reads scdr's
+  profiles from each task (`sched = "batch"`, `slice_us`, `nice`), so builds
+  and indexers wait while the desktop and short agent tool calls go first.
+  Built and installed separately (`make && make install`); not yet in the
+  Arch package.
 - Restores everything on `systemctl stop scdrd`: threads, unit weights,
   autogroup and iocost. systemd keeps an empty runtime drop-in
   (`CPUWeight=`) for each unit it touched under `/run`; it has no effect and is
