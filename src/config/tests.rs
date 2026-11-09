@@ -162,7 +162,10 @@ fn roles_layer_and_follow_power_profile() {
     let on_ac = c.roles.for_power(Some("performance"));
     assert_eq!(on_ac.get(Role::Foreground), Some("fg"));
     assert_eq!(on_ac.get(Role::Audio), None, "etc.toml turned audio off");
-    assert_eq!(c.roles.for_power(Some("power-saver")).get(Role::Foreground), None);
+    assert_eq!(
+        c.roles.for_power(Some("power-saver")).get(Role::Foreground),
+        None
+    );
     assert_eq!(c.roles.for_power(None).get(Role::Game), None);
 
     let e = cfg(&[("x.toml", "[roles]\ngame = \"nope\"\n")]).unwrap_err();
@@ -193,18 +196,31 @@ fn scheduler_policy_and_pressure() {
         "#,
     )])
     .unwrap();
-    let ext = |name: &str, mode| SchedChoice::Ext { name: name.into(), mode };
+    let ext = |name: &str, mode| SchedChoice::Ext {
+        name: name.into(),
+        mode,
+    };
     let s = &c.sched_ext;
     assert_eq!(s.choose(Some("balanced"), false), SchedChoice::Eevdf);
     assert_eq!(s.choose(Some("performance"), false), ext("scx_bpfland", 0));
-    assert_eq!(s.choose(Some("power-saver"), true), ext("scx_lavd", 1), "gaming wins");
+    assert_eq!(
+        s.choose(Some("power-saver"), true),
+        ext("scx_lavd", 1),
+        "gaming wins"
+    );
     assert_eq!(s.choose(Some("power-saver"), false), ext("scx_lavd", 2));
     assert_eq!(ext("scx_lavd", 2).to_string(), "scx_lavd:powersave");
 
     let ps = c.eevdf.for_power(Some("power-saver"));
-    assert_eq!((ps.preempt.as_deref(), ps.base_slice_us), (Some("lazy"), Some(4000)));
+    assert_eq!(
+        (ps.preempt.as_deref(), ps.base_slice_us),
+        (Some("lazy"), Some(4000))
+    );
     assert_eq!(c.eevdf.for_power(None).preempt.as_deref(), Some("full"));
-    assert_eq!((c.pressure.high, c.pressure.low, c.pressure.hold_secs), (30.0, 5.0, 10));
+    assert_eq!(
+        (c.pressure.high, c.pressure.low, c.pressure.hold_secs),
+        (30.0, 5.0, 10)
+    );
 
     for bad in [
         "[sched_ext]\ndefault = \"lavd:turbo\"\n",

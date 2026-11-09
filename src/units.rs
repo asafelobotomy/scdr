@@ -85,7 +85,10 @@ impl fmt::Display for UnitId {
 
 /// `user@1000.service` -> 1000.
 fn user_manager_uid(part: &str) -> Option<u32> {
-    part.strip_prefix("user@")?.strip_suffix(".service")?.parse().ok()
+    part.strip_prefix("user@")?
+        .strip_suffix(".service")?
+        .parse()
+        .ok()
 }
 
 /// A uid's user name, cached: unit ids are resolved on every exec of a
@@ -137,7 +140,8 @@ impl fmt::Display for Weights {
 
 pub fn get(id: &UnitId) -> Result<Weights, String> {
     let mut cmd = id.systemctl();
-    cmd.args(["show", "-p", "CPUWeight", "-p", "IOWeight", "--"]).arg(&id.unit);
+    cmd.args(["show", "-p", "CPUWeight", "-p", "IOWeight", "--"])
+        .arg(&id.unit);
     parse_show(&run(cmd)?)
 }
 
@@ -149,7 +153,10 @@ fn parse_show(out: &str) -> Result<Weights, String> {
         };
         let parsed = match value {
             "" | "[not set]" | "18446744073709551615" => None,
-            v => Some(v.parse::<u64>().map_err(|_| format!("unsupported {key}={v}"))?),
+            v => Some(
+                v.parse::<u64>()
+                    .map_err(|_| format!("unsupported {key}={v}"))?,
+            ),
         };
         match key {
             "CPUWeight" => w.cpu = parsed,
@@ -174,7 +181,9 @@ pub fn set(id: &UnitId, want: &Weights, current: &Weights) -> Result<(), String>
         return Ok(());
     }
     let mut cmd = id.systemctl();
-    cmd.args(["set-property", "--runtime", "--"]).arg(&id.unit).args(&props);
+    cmd.args(["set-property", "--runtime", "--"])
+        .arg(&id.unit)
+        .args(&props);
     run(cmd).map(|_| ())
 }
 
@@ -214,32 +223,55 @@ mod tests {
     fn unit_from_cgroup() {
         let me = user_name(unsafe { libc::getuid() }).unwrap();
         let uid = unsafe { libc::getuid() };
-        let app = format!("/user.slice/user-{uid}.slice/user@{uid}.service/app.slice/app-firefox-12.scope");
+        let app = format!(
+            "/user.slice/user-{uid}.slice/user@{uid}.service/app.slice/app-firefox-12.scope"
+        );
         assert_eq!(
             UnitId::from_cgroup(&app),
-            Some(UnitId { unit: "app-firefox-12.scope".into(), user: Some(me) })
+            Some(UnitId {
+                unit: "app-firefox-12.scope".into(),
+                user: Some(me)
+            })
         );
         assert_eq!(
             UnitId::from_cgroup("/system.slice/NetworkManager.service"),
-            Some(UnitId { unit: "NetworkManager.service".into(), user: None })
+            Some(UnitId {
+                unit: "NetworkManager.service".into(),
+                user: None
+            })
         );
         assert_eq!(
-            UnitId::from_cgroup("/user.slice/user-1000.slice/session-2.scope").unwrap().user,
+            UnitId::from_cgroup("/user.slice/user-1000.slice/session-2.scope")
+                .unwrap()
+                .user,
             None
         );
         // Delegated subtrees belong to the unit above them.
         assert_eq!(
-            UnitId::from_cgroup("/system.slice/docker-ab.scope/inner").unwrap().unit,
+            UnitId::from_cgroup("/system.slice/docker-ab.scope/inner")
+                .unwrap()
+                .unit,
             "docker-ab.scope"
         );
         assert_eq!(unit_name(&app), Some("app-firefox-12.scope"));
-        assert_eq!(unit_name("/system.slice/docker-ab.scope/inner"), Some("docker-ab.scope"));
-        assert_eq!(unit_name("/user.slice/user-1000.slice/user@1000.service/init.scope"), None);
+        assert_eq!(
+            unit_name("/system.slice/docker-ab.scope/inner"),
+            Some("docker-ab.scope")
+        );
+        assert_eq!(
+            unit_name("/user.slice/user-1000.slice/user@1000.service/init.scope"),
+            None
+        );
         assert_eq!(
             unit_cgroup("/system.slice/docker-ab.scope/inner").as_deref(),
             Some("/system.slice/docker-ab.scope")
         );
-        for skip in ["/init.scope", "/user.slice/user-1000.slice/user@1000.service/init.scope", "/system.slice", ""] {
+        for skip in [
+            "/init.scope",
+            "/user.slice/user-1000.slice/user@1000.service/init.scope",
+            "/system.slice",
+            "",
+        ] {
             assert_eq!(UnitId::from_cgroup(skip), None, "{skip}");
         }
     }
@@ -248,7 +280,10 @@ mod tests {
     fn parse_systemctl_show() {
         assert_eq!(
             parse_show("CPUWeight=[not set]\nIOWeight=200\n").unwrap(),
-            Weights { cpu: None, io: Some(200) }
+            Weights {
+                cpu: None,
+                io: Some(200)
+            }
         );
         assert_eq!(parse_show("CPUWeight=\n").unwrap(), Weights::default());
         assert!(parse_show("CPUWeight=idle\n").is_err());
@@ -262,7 +297,8 @@ mod tests {
         if let Some(id) = UnitId::from_cgroup(path) {
             if id.user.is_some() {
                 let mut cmd = Command::new("systemctl");
-                cmd.args(["--user", "show", "-p", "CPUWeight", "-p", "IOWeight", "--"]).arg(&id.unit);
+                cmd.args(["--user", "show", "-p", "CPUWeight", "-p", "IOWeight", "--"])
+                    .arg(&id.unit);
                 if let Ok(out) = run(cmd) {
                     parse_show(&out).unwrap();
                 }

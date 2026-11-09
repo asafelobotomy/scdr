@@ -261,7 +261,8 @@ fn apply_threads(tids: &[u32], target: &Snapshot, owned: &[Snapshot], dry_run: b
         // A thread someone else tuned (an app parking a worker at batch/19,
         // rtkit, renice) is left alone entirely, not just the tuned field.
         let cpu_owned = at_class || owned.iter().any(|o| o.task.cpu.class() == cur.class());
-        let io_owned = ioprio == target.task.ioprio || owned.iter().any(|o| o.task.ioprio == ioprio);
+        let io_owned =
+            ioprio == target.task.ioprio || owned.iter().any(|o| o.task.ioprio == ioprio);
         if !cpu_owned || !io_owned {
             out.foreign += 1;
             continue;

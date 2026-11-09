@@ -11,7 +11,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// `only`: import just these types (e.g. `Game`); empty imports everything.
-pub fn import(dir: &Path, only: &[String], covered: &dyn Fn(&str) -> bool) -> anyhow::Result<Import> {
+pub fn import(
+    dir: &Path,
+    only: &[String],
+    covered: &dyn Fn(&str) -> bool,
+) -> anyhow::Result<Import> {
     let mut files = Vec::new();
     collect(dir, &mut files)?;
     files.sort();
@@ -31,10 +35,13 @@ pub fn import(dir: &Path, only: &[String], covered: &dyn Fn(&str) -> bool) -> an
                 continue;
             }
             let Ok(Json::Object(mut obj)) = serde_json::from_str::<Json>(line) else {
-                imp.skipped.push(format!("{}:{}: not a JSON object", path.display(), n + 1));
+                imp.skipped
+                    .push(format!("{}:{}: not a JSON object", path.display(), n + 1));
                 continue;
             };
-            let ty = obj.remove("type").and_then(|t| t.as_str().map(str::to_owned));
+            let ty = obj
+                .remove("type")
+                .and_then(|t| t.as_str().map(str::to_owned));
             if is_types {
                 if let Some(ty) = ty {
                     types.insert(ty, obj);
@@ -62,7 +69,9 @@ pub fn import(dir: &Path, only: &[String], covered: &dyn Fn(&str) -> bool) -> an
             imp.skipped.push(format!("{name}: unknown type {t:?}"));
             continue;
         }
-        let parent = ty.as_deref().map(|t| ensure_type(&mut imp, &mut type_profiles, t, &types[t]));
+        let parent = ty
+            .as_deref()
+            .map(|t| ensure_type(&mut imp, &mut type_profiles, t, &types[t]));
         let fields = convert(own, &mut imp.skipped, name);
         match (parent, fields.is_empty()) {
             (Some(parent), true) => grouped.entry(parent).or_default().push(glob_literal(name)),
@@ -81,10 +90,15 @@ pub fn import(dir: &Path, only: &[String], covered: &dyn Fn(&str) -> bool) -> an
         imp.rule(&profile, vec![("name".into(), names)]);
     }
     if filtered > 0 {
-        imp.skipped.push(format!("{filtered} rules of other types (--only {})", only.join(",")));
+        imp.skipped.push(format!(
+            "{filtered} rules of other types (--only {})",
+            only.join(",")
+        ));
     }
     if overlaps > 0 {
-        imp.skipped.push(format!("{overlaps} names already matched by your scdr rules (kept yours)"));
+        imp.skipped.push(format!(
+            "{overlaps} names already matched by your scdr rules (kept yours)"
+        ));
     }
     Ok(imp)
 }
@@ -94,7 +108,10 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
         let path = entry?.path();
         if path.is_dir() {
             collect(&path, out)?;
-        } else if path.extension().is_some_and(|e| e == "types" || e == "rules") {
+        } else if path
+            .extension()
+            .is_some_and(|e| e == "types" || e == "rules")
+        {
             out.push(path);
         }
     }
@@ -150,7 +167,9 @@ fn convert(obj: &Map<String, Json>, skipped: &mut Vec<String>, what: &str) -> Ve
     }
     match int("oom_score_adj") {
         Some(o) if valid_oom_score_adj(o) => f.push(("oom_score_adj".into(), o.to_string())),
-        Some(o) => skipped.push(format!("{what}: oom_score_adj={o} is outside -1000..1000, dropped")),
+        Some(o) => skipped.push(format!(
+            "{what}: oom_score_adj={o} is outside -1000..1000, dropped"
+        )),
         None => {}
     }
     for key in ["latency_nice", "cgroup", "cpuset", "name_regex"] {
@@ -163,7 +182,13 @@ fn convert(obj: &Map<String, Json>, skipped: &mut Vec<String>, what: &str) -> Ve
 
 fn slug(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_owned()
@@ -191,16 +216,28 @@ mod tests {
         let imp = import(&dir, &[], &|_| false).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         let c = imp.validate(&[]).unwrap();
-        let find = |n: &str| c.rules.find(&super::super::synthetic(n)).map(|r| r.profile.clone()).unwrap();
+        let find = |n: &str| {
+            c.rules
+                .find(&super::super::synthetic(n))
+                .map(|r| r.profile.clone())
+                .unwrap()
+        };
         let (a, b, x) = (find("foo.exe"), find("foo-exe"), find("x"));
         assert_ne!(a, b);
         assert_eq!(c.profiles[&a].profile.nice, Some(1));
         assert_eq!(c.profiles[&b].profile.nice, Some(2));
         assert_eq!(c.profiles[&x].profile.nice, Some(7));
-        assert_eq!(c.profiles[&x].chain.len(), 2, "inherits its type, not a rule's profile");
+        assert_eq!(
+            c.profiles[&x].chain.len(),
+            2,
+            "inherits its type, not a rule's profile"
+        );
         assert_eq!(c.profiles[&c.profiles[&x].chain[0]].profile.nice, Some(3));
         let skipped = imp.skipped.join("\n");
-        assert!(skipped.contains("nice=99") && skipped.contains("oom_score_adj=5000"), "{skipped}");
+        assert!(
+            skipped.contains("nice=99") && skipped.contains("oom_score_adj=5000"),
+            "{skipped}"
+        );
     }
 
     #[test]
@@ -235,7 +272,11 @@ mod tests {
         assert_eq!(mk.chain, ["ananicy-bg-cpuio", "ananicy-makepkg"]);
         assert_eq!(mk.profile.io.unwrap().to_string(), "be:6");
 
-        let find = |n: &str| c.rules.find(&super::super::synthetic(n)).map(|r| r.profile.clone());
+        let find = |n: &str| {
+            c.rules
+                .find(&super::super::synthetic(n))
+                .map(|r| r.profile.clone())
+        };
         assert_eq!(find("doom.exe").as_deref(), Some("ananicy-game"));
         assert_eq!(find("q*3").as_deref(), Some("ananicy-game"));
         assert_eq!(find("qux3"), None, "the * in q*3 is literal");
@@ -243,8 +284,16 @@ mod tests {
         assert_eq!(find("pacman"), None, "covered by the existing config");
 
         let skipped = imp.skipped.join("\n");
-        for expect in ["unknown type \"Nope\"", "not a JSON object", "latency_nice", "1 names already matched"] {
-            assert!(skipped.contains(expect), "{expect} missing from:\n{skipped}\n---\n{toml}");
+        for expect in [
+            "unknown type \"Nope\"",
+            "not a JSON object",
+            "latency_nice",
+            "1 names already matched",
+        ] {
+            assert!(
+                skipped.contains(expect),
+                "{expect} missing from:\n{skipped}\n---\n{toml}"
+            );
         }
     }
 }

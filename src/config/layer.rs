@@ -50,7 +50,9 @@ impl Paths {
     pub fn base_document(&self) -> Result<Value, ConfigError> {
         let mut merged = Map::new();
         for path in self.lower_files() {
-            let Value::Object(doc) = read_document(&path)? else { continue };
+            let Value::Object(doc) = read_document(&path)? else {
+                continue;
+            };
             merge(&mut merged, doc, &path.display().to_string());
         }
         Ok(Value::Object(merged))
@@ -71,14 +73,19 @@ impl Paths {
         let text = to_toml(doc).map_err(|e| ConfigError::invalid(&path, e))?;
         let mut sources = Vec::new();
         for file in self.lower_files() {
-            let contents = std::fs::read_to_string(&file)
-                .map_err(|source| ConfigError::Io { path: file.clone(), source })?;
+            let contents = std::fs::read_to_string(&file).map_err(|source| ConfigError::Io {
+                path: file.clone(),
+                source,
+            })?;
             sources.push((file, contents));
         }
         sources.push((path.clone(), text.clone()));
         let config = Config::from_sources(sources)?;
 
-        let io = |source| ConfigError::Io { path: path.clone(), source };
+        let io = |source| ConfigError::Io {
+            path: path.clone(),
+            source,
+        };
         if text.is_empty() {
             match std::fs::remove_file(&path) {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(io(e)),
@@ -109,9 +116,12 @@ impl Paths {
 }
 
 fn read_document(path: &Path) -> Result<Value, ConfigError> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|source| ConfigError::Io { path: path.to_owned(), source })?;
-    let doc: toml::Table = toml::from_str(&text).map_err(|e| ConfigError::invalid(path, e.to_string()))?;
+    let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
+        path: path.to_owned(),
+        source,
+    })?;
+    let doc: toml::Table =
+        toml::from_str(&text).map_err(|e| ConfigError::invalid(path, e.to_string()))?;
     serde_json::to_value(doc).map_err(|e| ConfigError::invalid(path, e.to_string()))
 }
 
@@ -200,7 +210,9 @@ fn strip_metadata(doc: &Value) -> Value {
 /// JSON to TOML, dropping nulls, empty tables and the widget's metadata.
 /// An empty document becomes "".
 fn to_toml(doc: &Value) -> Result<String, String> {
-    let Some(clean) = clean(&strip_metadata(doc)) else { return Ok(String::new()) };
+    let Some(clean) = clean(&strip_metadata(doc)) else {
+        return Ok(String::new());
+    };
     if !clean.is_object() {
         return Err("settings must be a table".into());
     }

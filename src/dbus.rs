@@ -53,7 +53,8 @@ impl Daemon {
         serde_json::to_string(&st).unwrap_or_default()
     }
 
-    /// The focused window's process (from the session agent's KWin script).
+    /// The focused window's process (from the session agent); 0 means no app
+    /// is focused (the screen is locked).
     async fn set_foreground(
         &self,
         pid: u32,
@@ -62,7 +63,8 @@ impl Daemon {
     ) -> zbus::fdo::Result<()> {
         let (uid, sender) = caller(&header, conn).await?;
         let mut svc = self.service.lock().unwrap();
-        svc.set_foreground(uid, &sender, pid).map_err(zbus::fdo::Error::InvalidArgs)
+        svc.set_foreground(uid, &sender, pid)
+            .map_err(zbus::fdo::Error::InvalidArgs)
     }
 
     /// Processes with a running PipeWire audio stream (replaces the set).
@@ -74,7 +76,8 @@ impl Daemon {
     ) -> zbus::fdo::Result<()> {
         let (uid, sender) = caller(&header, conn).await?;
         let mut svc = self.service.lock().unwrap();
-        svc.set_audio(uid, &sender, pids).map_err(zbus::fdo::Error::InvalidArgs)
+        svc.set_audio(uid, &sender, pids)
+            .map_err(zbus::fdo::Error::InvalidArgs)
     }
 
     /// Processes registered with GameMode (replaces the set).
@@ -86,7 +89,8 @@ impl Daemon {
     ) -> zbus::fdo::Result<()> {
         let (uid, sender) = caller(&header, conn).await?;
         let mut svc = self.service.lock().unwrap();
-        svc.set_games(uid, &sender, pids).map_err(zbus::fdo::Error::InvalidArgs)
+        svc.set_games(uid, &sender, pids)
+            .map_err(zbus::fdo::Error::InvalidArgs)
     }
 
     /// Managed processes: pid, name, profile, and the rule or role behind it.
@@ -136,7 +140,10 @@ impl Daemon {
     }
 
     /// See [`settings_json`]. Open to everyone, like Status.
-    async fn settings(&self, #[zbus(connection)] conn: &zbus::Connection) -> zbus::fdo::Result<String> {
+    async fn settings(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> zbus::fdo::Result<String> {
         settings_json(self, conn).await
     }
 
@@ -150,10 +157,17 @@ impl Daemon {
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<String> {
         authorize(&header, conn).await?;
-        let doc: serde_json::Value =
-            serde_json::from_str(&json).map_err(|e| zbus::fdo::Error::InvalidArgs(e.to_string()))?;
-        let config = self.paths.write_layer(&doc).map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
-        let summary = format!("{} profiles, {} rules", config.profiles.len(), config.rules.len());
+        let doc: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|e| zbus::fdo::Error::InvalidArgs(e.to_string()))?;
+        let config = self
+            .paths
+            .write_layer(&doc)
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        let summary = format!(
+            "{} profiles, {} rules",
+            config.profiles.len(),
+            config.rules.len()
+        );
         self.service.lock().unwrap().reload(config);
         tracing::info!("settings saved from the widget: {summary}");
         Ok(summary)
@@ -170,7 +184,12 @@ impl Daemon {
     ) -> zbus::fdo::Result<()> {
         let choice: SchedChoice = scheduler.parse().map_err(zbus::fdo::Error::InvalidArgs)?;
         authorize(&header, conn).await?;
-        let was = self.trial.lock().unwrap().as_ref().map(|(_, was)| was.clone());
+        let was = self
+            .trial
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|(_, was)| was.clone());
         let was = match was {
             Some(w) => w,
             None => policy::current_scheduler(conn).await?,
@@ -206,8 +225,13 @@ impl Daemon {
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<String> {
         authorize(&header, conn).await?;
-        let config = Config::load(&self.paths).map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
-        let summary = format!("{} profiles, {} rules", config.profiles.len(), config.rules.len());
+        let config =
+            Config::load(&self.paths).map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        let summary = format!(
+            "{} profiles, {} rules",
+            config.profiles.len(),
+            config.rules.len()
+        );
         self.service.lock().unwrap().reload(config);
         tracing::info!("configuration reloaded: {summary}");
         Ok(summary)
@@ -222,8 +246,16 @@ async fn settings_json(d: &Daemon, conn: &zbus::Connection) -> zbus::fdo::Result
         Ok(s) => (crate::schedulers::inventory(s), None),
         Err(e) => (Vec::new(), Some(e.to_string())),
     };
-    let current = policy::current_scheduler(conn).await.ok().map(|c| c.to_string());
-    let trial = d.trial.lock().unwrap().as_ref().map(|(t, w)| (t.to_string(), w.to_string()));
+    let current = policy::current_scheduler(conn)
+        .await
+        .ok()
+        .map(|c| c.to_string());
+    let trial = d
+        .trial
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|(t, w)| (t.to_string(), w.to_string()));
     let json = serde_json::json!({
         "layer_file": d.paths.layer(),
         "layer": d.paths.layer_document().map_err(failed)?,
@@ -252,11 +284,17 @@ async fn authorize(header: &Header<'_>, conn: &zbus::Connection) -> zbus::fdo::R
         "org.freedesktop.PolicyKit1.Authority",
     )
     .await?;
-    let subject = ("system-bus-name", HashMap::from([("name", Value::from(sender))]));
+    let subject = (
+        "system-bus-name",
+        HashMap::from([("name", Value::from(sender))]),
+    );
     let details: HashMap<&str, &str> = HashMap::new();
     const ALLOW_USER_INTERACTION: u32 = 1;
     let reply = polkit
-        .call_method("CheckAuthorization", &(subject, POLKIT_ACTION, details, ALLOW_USER_INTERACTION, ""))
+        .call_method(
+            "CheckAuthorization",
+            &(subject, POLKIT_ACTION, details, ALLOW_USER_INTERACTION, ""),
+        )
         .await
         .map_err(|e| zbus::fdo::Error::Failed(format!("polkit: {e}")))?;
     // The reply is one struct (bba{ss}); accept it nested or flattened.
@@ -270,7 +308,9 @@ async fn authorize(header: &Header<'_>, conn: &zbus::Connection) -> zbus::fdo::R
     if authorized {
         Ok(())
     } else {
-        Err(zbus::fdo::Error::AccessDenied(format!("not authorized for {POLKIT_ACTION}")))
+        Err(zbus::fdo::Error::AccessDenied(format!(
+            "not authorized for {POLKIT_ACTION}"
+        )))
     }
 }
 

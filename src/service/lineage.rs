@@ -43,12 +43,17 @@ pub(super) fn hand_tuned(pid: u32, ppid: u32, inherited: Option<&Inherited>) -> 
         .then(|| "priorities differ from its parent's (started via nice/chrt/ionice?)".to_owned())
 }
 
-fn differs(me: &apply::TaskState, parent: &apply::TaskState, inherited: Option<&Inherited>) -> bool {
+fn differs(
+    me: &apply::TaskState,
+    parent: &apply::TaskState,
+    inherited: Option<&Inherited>,
+) -> bool {
     let key = |t: &apply::TaskState| (t.cpu.policy, t.cpu.nice, t.ioprio);
     // The child holds exactly what scdr gave its ancestor, or what scdr put
     // back: that is scdr's doing, whatever the parent shows now (it may
     // still be boosted, already put back, or gone, leaving systemd).
-    let ours = |inh: &Inherited| key(me) == key(&inh.target.task) || key(me) == key(&inh.original.task);
+    let ours =
+        |inh: &Inherited| key(me) == key(&inh.target.task) || key(me) == key(&inh.original.task);
     if inherited.is_some_and(ours) {
         return false;
     }
@@ -62,7 +67,14 @@ mod tests {
 
     fn task(nice: i32) -> TaskState {
         TaskState {
-            cpu: CpuState { policy: 0, priority: 0, nice, slice_ns: 0, util_min: 0, util_max: 1024 },
+            cpu: CpuState {
+                policy: 0,
+                priority: 0,
+                nice,
+                slice_ns: 0,
+                util_min: 0,
+                util_max: 1024,
+            },
             ioprio: 0,
         }
     }
@@ -71,8 +83,14 @@ mod tests {
     fn an_inherited_boost_is_not_hand_tuning() {
         // Hyprland boosted to -5; sh already put back to 0; systemd-run forked before that.
         let inh = Inherited {
-            target: Snapshot { task: task(-5), oom: None },
-            original: Snapshot { task: task(0), oom: None },
+            target: Snapshot {
+                task: task(-5),
+                oom: None,
+            },
+            original: Snapshot {
+                task: task(0),
+                oom: None,
+            },
         };
         assert!(!differs(&task(-5), &task(0), Some(&inh)));
         // And the other way round: child already put back, parent not yet.

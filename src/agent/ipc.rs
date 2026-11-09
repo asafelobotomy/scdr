@@ -27,7 +27,11 @@ where
             Err(e) if failures == 0 => tracing::warn!("{name} focus tracking interrupted: {e:#}"),
             Err(e) => tracing::debug!("{name}: {e:#}"),
         }
-        failures = if started.elapsed() >= HEALTHY { 1 } else { failures.saturating_add(1) };
+        failures = if started.elapsed() >= HEALTHY {
+            1
+        } else {
+            failures.saturating_add(1)
+        };
         tokio::time::sleep(backoff(failures)).await;
     }
 }

@@ -16,7 +16,11 @@ impl Service {
     pub fn set_cpu_pressure(&mut self, avg10: f64) {
         self.cpu_pressure = Some(avg10);
         let p = self.config.pressure;
-        let active = if self.pressure_active { avg10 > p.low } else { avg10 >= p.high };
+        let active = if self.pressure_active {
+            avg10 > p.low
+        } else {
+            avg10 >= p.high
+        };
         if active == self.pressure_active {
             return;
         }
@@ -34,7 +38,10 @@ impl Service {
         let mut uids: Vec<u32> = self.sessions.values().map(|s| s.uid).collect();
         uids.sort_unstable();
         uids.dedup();
-        let pids = uids.into_iter().flat_map(|uid| cgroup_pids(app_slice(uid).trim_end_matches('/'))).collect();
+        let pids = uids
+            .into_iter()
+            .flat_map(|uid| cgroup_pids(app_slice(uid).trim_end_matches('/')))
+            .collect();
         self.reevaluate(pids);
     }
 

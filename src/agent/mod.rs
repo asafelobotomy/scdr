@@ -6,7 +6,9 @@
 //! - the focused window's pid: from a KWin script it loads, Hyprland's or
 //!   niri's IPC, or the scdr GNOME Shell extension,
 //! - processes registered with GameMode,
-//! - processes with a running PipeWire audio stream.
+//! - processes with a running PipeWire audio stream,
+//! - whether the screen is locked (logind's `LockedHint`): while it is, no
+//!   app counts as focused.
 //!
 //! It re-sends everything whenever scdrd (re)appears on the system bus.
 
@@ -14,6 +16,7 @@ mod gamemode;
 mod hyprland;
 mod ipc;
 mod kwin;
+mod lock;
 mod niri;
 mod pipewire;
 mod push;
@@ -34,6 +37,8 @@ pub struct State {
     pub foreground: Option<u32>,
     pub audio: BTreeSet<u32>,
     pub games: BTreeSet<u32>,
+    /// The screen is locked: scdrd is told no app is focused.
+    pub locked: bool,
 }
 
 /// State shared between the watchers and the task that pushes to scdrd.
@@ -56,6 +61,14 @@ impl Shared {
         let mut s = self.state.lock().unwrap();
         let changed = s.foreground != Some(pid);
         s.foreground = Some(pid);
+        drop(s);
+        self.notify_if(changed);
+    }
+
+    pub fn set_locked(&self, locked: bool) {
+        let mut s = self.state.lock().unwrap();
+        let changed = s.locked != locked;
+        s.locked = locked;
         drop(s);
         self.notify_if(changed);
     }
@@ -110,7 +123,12 @@ pub async fn run() -> anyhow::Result<()> {
     let shared = Shared::default();
     let session = zbus::connection::Builder::session()?
         .name(SESSION_NAME)?
-        .serve_at(SESSION_PATH, Session1 { shared: shared.clone() })?
+        .serve_at(
+            SESSION_PATH,
+            Session1 {
+                shared: shared.clone(),
+            },
+        )?
         .build()
         .await?;
     let system = zbus::Connection::system().await?;
@@ -125,6 +143,14 @@ pub async fn run() -> anyhow::Result<()> {
         }
     });
     pipewire::spawn(shared.clone());
+    tokio::spawn({
+        let (system, shared) = (system.clone(), shared.clone());
+        async move {
+            if let Err(e) = lock::watch(system, shared).await {
+                tracing::warn!("not following the screen lock: {e:#}");
+            }
+        }
+    });
 
     let daemon = Daemon1Proxy::new(&system).await?;
     let mut daemon_restarts = zbus::fdo::DBusProxy::new(&system)
@@ -169,7 +195,10 @@ pub const GNOME_EXTENSION: &str = "scdr-foreground@scdr";
 /// the KWin path was chosen (so the script is unloaded on exit).
 async fn start_foreground(session: &zbus::Connection, shared: &Shared) -> bool {
     let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
-    let spawn = |name: &'static str, fut: std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>>| {
+    let spawn = |name: &'static str,
+                 fut: std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>,
+    >| {
         tracing::info!("following focus through {name}");
         tokio::spawn(async move {
             if let Err(e) = fut.await {
@@ -179,11 +208,19 @@ async fn start_foreground(session: &zbus::Connection, shared: &Shared) -> bool {
     };
     if hyprland::available() {
         let sh = shared.clone();
-        spawn("Hyprland IPC", Box::pin(ipc::retry("Hyprland IPC", move || hyprland::watch(sh.clone()))));
+        spawn(
+            "Hyprland IPC",
+            Box::pin(ipc::retry("Hyprland IPC", move || {
+                hyprland::watch(sh.clone())
+            })),
+        );
         false
     } else if niri::available() {
         let sh = shared.clone();
-        spawn("niri IPC", Box::pin(ipc::retry("niri IPC", move || niri::watch(sh.clone()))));
+        spawn(
+            "niri IPC",
+            Box::pin(ipc::retry("niri IPC", move || niri::watch(sh.clone()))),
+        );
         false
     } else if desktop.split(':').any(|d| d == "GNOME") {
         tracing::info!(
@@ -191,7 +228,9 @@ async fn start_foreground(session: &zbus::Connection, shared: &Shared) -> bool {
         );
         false
     } else {
-        tracing::info!("following focus through a KWin script (loaded whenever KWin is on the bus)");
+        tracing::info!(
+            "following focus through a KWin script (loaded whenever KWin is on the bus)"
+        );
         let session = session.clone();
         tokio::spawn(async move {
             if let Err(e) = kwin::watch(session).await {

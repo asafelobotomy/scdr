@@ -184,7 +184,9 @@ fn run(mut sock: OwnedFd, tx: UnboundedSender<Event>) {
                             continue;
                         }
                         Err(e) => {
-                            tracing::error!("can't reopen the process event socket ({e}); polling /proc instead");
+                            tracing::error!(
+                                "can't reopen the process event socket ({e}); polling /proc instead"
+                            );
                             let _ = tx.send(Event::Lost);
                             return;
                         }
@@ -201,7 +203,8 @@ fn run(mut sock: OwnedFd, tx: UnboundedSender<Event>) {
 }
 
 fn u32_at(b: &[u8], off: usize) -> Option<u32> {
-    b.get(off..off + 4).map(|s| u32::from_ne_bytes(s.try_into().unwrap()))
+    b.get(off..off + 4)
+        .map(|s| u32::from_ne_bytes(s.try_into().unwrap()))
 }
 
 /// Parses one datagram, which may hold several netlink messages.
@@ -297,7 +300,11 @@ mod tests {
         assert_eq!(
             parse(&dgram),
             vec![
-                Event::Fork { parent_tgid: 10, child_pid: 11, child_tgid: 11 },
+                Event::Fork {
+                    parent_tgid: 10,
+                    child_pid: 11,
+                    child_tgid: 11
+                },
                 Event::Exec { pid: 11, tgid: 11 },
                 Event::Exit { pid: 11, tgid: 11 },
             ]

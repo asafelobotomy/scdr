@@ -22,7 +22,10 @@ pub fn inventory(supported: Vec<(String, Vec<u32>)>) -> Vec<SchedulerInfo> {
         .into_iter()
         .map(|(full, modes)| {
             let name = full.strip_prefix("scx_").unwrap_or(&full).to_owned();
-            let mut modes: Vec<&'static str> = modes.iter().filter_map(|m| MODES.get(*m as usize).copied()).collect();
+            let mut modes: Vec<&'static str> = modes
+                .iter()
+                .filter_map(|m| MODES.get(*m as usize).copied())
+                .collect();
             if modes.is_empty() {
                 modes.push(MODES[0]);
             }
@@ -39,15 +42,22 @@ pub fn inventory(supported: Vec<(String, Vec<u32>)>) -> Vec<SchedulerInfo> {
 /// Whether an executable of this name is in `$PATH` (or /usr/bin).
 pub fn on_path(bin: &str) -> bool {
     let path = std::env::var_os("PATH").unwrap_or_else(|| "/usr/local/bin:/usr/bin".into());
-    std::env::split_paths(&path).any(|dir| dir.join(bin).is_file()) || Path::new("/usr/bin").join(bin).is_file()
+    std::env::split_paths(&path).any(|dir| dir.join(bin).is_file())
+        || Path::new("/usr/bin").join(bin).is_file()
 }
 
 fn describe(name: &str) -> Option<&'static str> {
     Some(match name {
-        "bpfland" => "Favours interactive tasks that sleep and wake often. A good general choice for desktops and games.",
-        "lavd" => "Latency-criticality aware virtual deadlines, built for gaming; has power-saving and performance modes.",
+        "bpfland" => {
+            "Favours interactive tasks that sleep and wake often. A good general choice for desktops and games."
+        }
+        "lavd" => {
+            "Latency-criticality aware virtual deadlines, built for gaming; has power-saving and performance modes."
+        }
         "rusty" => "General-purpose, with load balancing across CPU domains decided in user space.",
-        "rustland" => "Makes its scheduling decisions in a user-space Rust program; mostly a showcase.",
+        "rustland" => {
+            "Makes its scheduling decisions in a user-space Rust program; mostly a showcase."
+        }
         "flash" => "Earliest-deadline-first, aiming for fair and predictable latency.",
         "cosmos" => "Lightweight and general-purpose, keeping tasks close to their caches.",
         "p2dq" => "Pick-two load balancing over per-domain queues; versatile.",
@@ -60,10 +70,16 @@ fn describe(name: &str) -> Option<&'static str> {
 mod tests {
     #[test]
     fn names_and_modes() {
-        let inv = super::inventory(vec![("scx_bpfland".into(), vec![0, 1]), ("scx_new".into(), vec![])]);
+        let inv = super::inventory(vec![
+            ("scx_bpfland".into(), vec![0, 1]),
+            ("scx_new".into(), vec![]),
+        ]);
         assert_eq!(inv[0].name, "bpfland");
         assert_eq!(inv[0].modes, vec!["auto", "gaming"]);
         assert!(inv[0].description.is_some());
-        assert_eq!((inv[1].modes.clone(), inv[1].description), (vec!["auto"], None));
+        assert_eq!(
+            (inv[1].modes.clone(), inv[1].description),
+            (vec!["auto"], None)
+        );
     }
 }

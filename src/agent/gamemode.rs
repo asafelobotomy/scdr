@@ -31,7 +31,11 @@ pub async fn watch(session: zbus::Connection, shared: Shared) -> anyhow::Result<
     let mut unregistered = gm.receive_game_unregistered().await?;
 
     let dbus = zbus::fdo::DBusProxy::new(&session).await?;
-    if dbus.name_has_owner(BusName::try_from(SERVICE)?).await.unwrap_or(false) {
+    if dbus
+        .name_has_owner(BusName::try_from(SERVICE)?)
+        .await
+        .unwrap_or(false)
+    {
         if let Ok(games) = gm.list_games().await {
             shared.set_games(games.iter().map(|(pid, _)| *pid as u32).collect());
         }

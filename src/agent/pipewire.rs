@@ -75,8 +75,14 @@ impl Graph {
 fn client_pid(props: &Value) -> Option<u32> {
     let prop = |k: &str| props.get(k).and_then(as_u64);
     let pulse_proxy = props.get("client.api").and_then(Value::as_str) == Some("pipewire-pulse");
-    let pid = if pulse_proxy { None } else { prop("pipewire.sec.pid") };
-    pid.or_else(|| prop("application.process.id")).and_then(|p| u32::try_from(p).ok()).filter(|p| *p > 0)
+    let pid = if pulse_proxy {
+        None
+    } else {
+        prop("pipewire.sec.pid")
+    };
+    pid.or_else(|| prop("application.process.id"))
+        .and_then(|p| u32::try_from(p).ok())
+        .filter(|p| *p > 0)
 }
 
 /// pw-dump prints numbers, but some properties arrive as strings.
@@ -88,19 +94,24 @@ fn as_u64(v: &Value) -> Option<u64> {
 pub fn spawn(shared: Shared) {
     std::thread::Builder::new()
         .name("scdr-pipewire".into())
-        .spawn(move || loop {
-            if let Err(e) = follow(&shared) {
-                tracing::debug!("pw-dump: {e}");
+        .spawn(move || {
+            loop {
+                if let Err(e) = follow(&shared) {
+                    tracing::debug!("pw-dump: {e}");
+                }
+                shared.set_audio(BTreeSet::new());
+                std::thread::sleep(Duration::from_secs(5));
             }
-            shared.set_audio(BTreeSet::new());
-            std::thread::sleep(Duration::from_secs(5));
         })
         .expect("spawn pipewire thread");
 }
 
 fn follow(shared: &Shared) -> std::io::Result<()> {
     let mut cmd = Command::new("pw-dump");
-    cmd.args(["--monitor", "--no-colors"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    cmd.args(["--monitor", "--no-colors"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
     // Die with the agent rather than be orphaned. PDEATHSIG is tied to the
     // *thread* that forked, which is fine here: this thread loops for the life
     // of the process, so the signal comes when the agent exits.
@@ -123,7 +134,8 @@ fn follow(shared: &Shared) -> std::io::Result<()> {
     let stdout = child.stdout.take().expect("piped stdout");
     let mut graph = Graph::default();
     let mut last = BTreeSet::new();
-    let stream = serde_json::Deserializer::from_reader(BufReader::new(stdout)).into_iter::<Vec<Value>>();
+    let stream =
+        serde_json::Deserializer::from_reader(BufReader::new(stdout)).into_iter::<Vec<Value>>();
     for batch in stream {
         let Ok(batch) = batch else { break };
         for obj in &batch {
@@ -164,7 +176,9 @@ mod tests {
         assert_eq!(g.audio_pids(), BTreeSet::from([4242]));
 
         // The microphone stream starts; a state-only update keeps its props.
-        g.update(&json!({"id": 81, "type": "PipeWire:Interface:Node", "info": {"state": "running"}}));
+        g.update(
+            &json!({"id": 81, "type": "PipeWire:Interface:Node", "info": {"state": "running"}}),
+        );
         assert_eq!(g.audio_pids(), BTreeSet::from([777, 4242]));
 
         // Removal is {"id": N, "info": null}.
@@ -181,7 +195,10 @@ mod tests {
         let pulse = json!({"client.api": "pipewire-pulse", "application.process.id": 1267, "pipewire.sec.pid": 1425});
         assert_eq!(client_pid(&pulse), Some(1267));
         // No peer credentials: fall back; string pids parse; nothing -> None.
-        assert_eq!(client_pid(&json!({"application.process.id": "777"})), Some(777));
+        assert_eq!(
+            client_pid(&json!({"application.process.id": "777"})),
+            Some(777)
+        );
         assert_eq!(client_pid(&json!({"pipewire.sec.pid": "9"})), Some(9));
         assert_eq!(client_pid(&json!({"application.name": "x"})), None);
         assert_eq!(client_pid(&json!({"pipewire.sec.pid": 0})), None);

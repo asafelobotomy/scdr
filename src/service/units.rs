@@ -54,7 +54,10 @@ impl Service {
             self.release_units_of(pid);
             return;
         };
-        let (Some(id), Some(cgroup)) = (UnitId::from_cgroup(&info.cgroup), units::unit_cgroup(&info.cgroup)) else {
+        let (Some(id), Some(cgroup)) = (
+            UnitId::from_cgroup(&info.cgroup),
+            units::unit_cgroup(&info.cgroup),
+        ) else {
             return;
         };
         if self.unit_queue.in_flight.contains(&id) {
@@ -68,7 +71,13 @@ impl Service {
         }
         let (cpu, io) = (profile.profile.cpu_weight, profile.profile.io_weight);
         let known = match self.units.get_mut(&id) {
-            Some(st) if st.owner != pid && self.procs.get(&st.owner).is_some_and(|e| claims(&self.config, &e.state)) => {
+            Some(st)
+                if st.owner != pid
+                    && self
+                        .procs
+                        .get(&st.owner)
+                        .is_some_and(|e| claims(&self.config, &e.state)) =>
+            {
                 return; // someone else in this unit already set its weights
             }
             Some(st) => {
@@ -120,9 +129,27 @@ impl Service {
     /// A job's result, from the worker.
     pub fn unit_done(&mut self, done: UnitDone) {
         match done {
-            UnitDone::Claimed { id, owner, profile, cgroup, original, applied, kept } => {
+            UnitDone::Claimed {
+                id,
+                owner,
+                profile,
+                cgroup,
+                original,
+                applied,
+                kept,
+            } => {
                 self.unit_queue.in_flight.remove(&id);
-                self.units.insert(id.clone(), UnitState { original, applied, owner, profile, kept, cgroup });
+                self.units.insert(
+                    id.clone(),
+                    UnitState {
+                        original,
+                        applied,
+                        owner,
+                        profile,
+                        kept,
+                        cgroup,
+                    },
+                );
                 // The claimant may have exited or lost its profile meanwhile.
                 if !self.holds_claim(owner) {
                     self.restore_unit(&id);
@@ -131,7 +158,9 @@ impl Service {
             UnitDone::Failed { id, error } => {
                 tracing::warn!("{id}: {error}; retrying in {}s", FAILED_BACKOFF.as_secs());
                 self.unit_queue.in_flight.remove(&id);
-                self.unit_queue.failed.insert(id, Instant::now() + FAILED_BACKOFF);
+                self.unit_queue
+                    .failed
+                    .insert(id, Instant::now() + FAILED_BACKOFF);
             }
             UnitDone::Restored { id } => {
                 self.unit_queue.in_flight.remove(&id);
@@ -140,7 +169,9 @@ impl Service {
     }
 
     fn holds_claim(&self, pid: u32) -> bool {
-        self.procs.get(&pid).is_some_and(|e| claims(&self.config, &e.state))
+        self.procs
+            .get(&pid)
+            .is_some_and(|e| claims(&self.config, &e.state))
     }
 
     /// `pid` no longer wants unit weights: restore any unit it held.
@@ -210,14 +241,20 @@ impl Service {
 
     /// Units whose weights scdr actually changed.
     pub(super) fn unit_count(&self) -> usize {
-        self.units.values().filter(|s| s.applied != s.original).count()
+        self.units
+            .values()
+            .filter(|s| s.applied != s.original)
+            .count()
     }
 }
 
 /// Whether a process in `state` holds unit weights.
 fn claims(config: &crate::config::Config, state: &State) -> bool {
     match state {
-        State::Managed(m) => config.profiles.get(&m.profile).is_some_and(|p| p.profile.has_unit_weights()),
+        State::Managed(m) => config
+            .profiles
+            .get(&m.profile)
+            .is_some_and(|p| p.profile.has_unit_weights()),
         _ => false,
     }
 }
@@ -228,6 +265,8 @@ mod tests {
     fn stopped_services_are_restored_not_forgotten() {
         assert!(super::forget_when_stopped("app-firefox-1234.scope"));
         assert!(!super::forget_when_stopped("pamac-daemon.service"));
-        assert!(!super::forget_when_stopped("app-org.telegram.desktop@autostart.service"));
+        assert!(!super::forget_when_stopped(
+            "app-org.telegram.desktop@autostart.service"
+        ));
     }
 }

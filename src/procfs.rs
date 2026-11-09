@@ -133,9 +133,12 @@ impl ProcInfo {
     /// name, and argv[0]'s file name (which also covers Wine's `C:\…\game.exe`).
     pub fn names(&self) -> Vec<&str> {
         let mut names = vec![self.comm.as_str()];
-        for path in [self.exe.as_deref(), self.cmdline.first().map(String::as_str)]
-            .into_iter()
-            .flatten()
+        for path in [
+            self.exe.as_deref(),
+            self.cmdline.first().map(String::as_str),
+        ]
+        .into_iter()
+        .flatten()
         {
             let name = basename(path);
             if !name.is_empty() && !names.contains(&name) {
@@ -163,7 +166,10 @@ pub fn comm(pid: u32) -> Option<String> {
 
 /// File name of `/proc/PID/exe`; unlike comm it is not truncated.
 pub fn exe_name(pid: u32) -> Option<String> {
-    let target = fs::read_link(format!("/proc/{pid}/exe")).ok()?.to_string_lossy().into_owned();
+    let target = fs::read_link(format!("/proc/{pid}/exe"))
+        .ok()?
+        .to_string_lossy()
+        .into_owned();
     let name = basename(target.strip_suffix(" (deleted)").unwrap_or(&target));
     (!name.is_empty()).then(|| name.to_owned())
 }
@@ -222,6 +228,9 @@ mod tests {
             uid: 1000,
             kthread: false,
         };
-        assert_eq!(info.names(), vec!["wine64-preloade", "wine64-preloader", "foo.exe"]);
+        assert_eq!(
+            info.names(),
+            vec!["wine64-preloade", "wine64-preloader", "foo.exe"]
+        );
     }
 }

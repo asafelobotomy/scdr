@@ -29,7 +29,8 @@ fn source_files_stay_under_400_lines() {
         .iter()
         .filter_map(|f| {
             let n = std::fs::read_to_string(f).unwrap().lines().count();
-            (n > MAX_LINES).then(|| format!("{} has {n} lines", f.strip_prefix(root).unwrap().display()))
+            (n > MAX_LINES)
+                .then(|| format!("{} has {n} lines", f.strip_prefix(root).unwrap().display()))
         })
         .collect();
     assert!(

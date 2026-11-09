@@ -51,8 +51,15 @@ impl FromStr for SchedChoice {
             .iter()
             .position(|m| *m == mode)
             .ok_or_else(|| format!("unknown mode {mode:?} (one of {})", MODES.join(", ")))?;
-        let name = if name.starts_with("scx_") { name.to_owned() } else { format!("scx_{name}") };
-        Ok(SchedChoice::Ext { name, mode: mode as u32 })
+        let name = if name.starts_with("scx_") {
+            name.to_owned()
+        } else {
+            format!("scx_{name}")
+        };
+        Ok(SchedChoice::Ext {
+            name,
+            mode: mode as u32,
+        })
     }
 }
 
@@ -123,7 +130,11 @@ pub struct Pressure {
 
 impl Default for Pressure {
     fn default() -> Self {
-        Pressure { high: 20.0, low: 5.0, hold_secs: 30 }
+        Pressure {
+            high: 20.0,
+            low: 5.0,
+            hold_secs: 30,
+        }
     }
 }
 
@@ -161,8 +172,15 @@ pub(super) struct RawPressure {
     hold_secs: Option<u64>,
 }
 
-pub(super) fn merge_sched_ext(into: &mut SchedExt, path: &Path, raw: RawSchedExt) -> Result<(), ConfigError> {
-    let parse = |s: &str| s.parse::<SchedChoice>().map_err(|e| ConfigError::invalid(path, format!("[sched_ext]: {e}")));
+pub(super) fn merge_sched_ext(
+    into: &mut SchedExt,
+    path: &Path,
+    raw: RawSchedExt,
+) -> Result<(), ConfigError> {
+    let parse = |s: &str| {
+        s.parse::<SchedChoice>()
+            .map_err(|e| ConfigError::invalid(path, format!("[sched_ext]: {e}")))
+    };
     if let Some(e) = raw.enable {
         into.enable = e;
     }
@@ -178,21 +196,37 @@ pub(super) fn merge_sched_ext(into: &mut SchedExt, path: &Path, raw: RawSchedExt
     Ok(())
 }
 
-pub(super) fn merge_eevdf(into: &mut EevdfConfig, path: &Path, raw: RawEevdf) -> Result<(), ConfigError> {
+pub(super) fn merge_eevdf(
+    into: &mut EevdfConfig,
+    path: &Path,
+    raw: RawEevdf,
+) -> Result<(), ConfigError> {
     let check = |k: &RawEevdfKnobs| -> Result<Eevdf, ConfigError> {
         if let Some(s) = k.base_slice_us {
             if !(100..=100_000).contains(&s) {
-                return Err(ConfigError::invalid(path, format!("[eevdf] base_slice_us must be 100..100000, got {s}")));
+                return Err(ConfigError::invalid(
+                    path,
+                    format!("[eevdf] base_slice_us must be 100..100000, got {s}"),
+                ));
             }
         }
         if let Some(p) = &k.preempt {
             if !["none", "voluntary", "full", "lazy"].contains(&p.as_str()) {
-                return Err(ConfigError::invalid(path, format!("[eevdf] preempt must be none, voluntary, full or lazy, got {p:?}")));
+                return Err(ConfigError::invalid(
+                    path,
+                    format!("[eevdf] preempt must be none, voluntary, full or lazy, got {p:?}"),
+                ));
             }
         }
-        Ok(Eevdf { base_slice_us: k.base_slice_us, preempt: k.preempt.clone() })
+        Ok(Eevdf {
+            base_slice_us: k.base_slice_us,
+            preempt: k.preempt.clone(),
+        })
     };
-    let base = check(&RawEevdfKnobs { base_slice_us: raw.base_slice_us, preempt: raw.preempt })?;
+    let base = check(&RawEevdfKnobs {
+        base_slice_us: raw.base_slice_us,
+        preempt: raw.preempt,
+    })?;
     into.base.base_slice_us = base.base_slice_us.or(into.base.base_slice_us);
     into.base.preempt = base.preempt.or(into.base.preempt.take());
     for (profile, knobs) in raw.power {
@@ -204,17 +238,34 @@ pub(super) fn merge_eevdf(into: &mut EevdfConfig, path: &Path, raw: RawEevdf) ->
     Ok(())
 }
 
-pub(super) fn merge_pressure(into: &mut Pressure, path: &Path, raw: RawPressure) -> Result<(), ConfigError> {
+pub(super) fn merge_pressure(
+    into: &mut Pressure,
+    path: &Path,
+    raw: RawPressure,
+) -> Result<(), ConfigError> {
     into.high = raw.high.unwrap_or(into.high);
     into.low = raw.low.unwrap_or(into.low);
     into.hold_secs = raw.hold_secs.unwrap_or(into.hold_secs);
     if into.hold_secs > 3600 {
-        return Err(ConfigError::invalid(path, format!("[pressure] hold_secs must be 0..3600, got {}", into.hold_secs)));
+        return Err(ConfigError::invalid(
+            path,
+            format!(
+                "[pressure] hold_secs must be 0..3600, got {}",
+                into.hold_secs
+            ),
+        ));
     }
-    if !(0.0..=100.0).contains(&into.low) || !(0.0..=100.0).contains(&into.high) || into.low >= into.high {
-        return Err(ConfigError::invalid(path, format!(
-            "[pressure] needs 0 <= low < high <= 100, got low={} high={}", into.low, into.high
-        )));
+    if !(0.0..=100.0).contains(&into.low)
+        || !(0.0..=100.0).contains(&into.high)
+        || into.low >= into.high
+    {
+        return Err(ConfigError::invalid(
+            path,
+            format!(
+                "[pressure] needs 0 <= low < high <= 100, got low={} high={}",
+                into.low, into.high
+            ),
+        ));
     }
     Ok(())
 }

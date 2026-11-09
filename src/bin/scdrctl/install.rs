@@ -61,9 +61,13 @@ impl Installer {
             (Installer::Pamac, Action::Install) => [v(&["pamac-installer"]), v(&PACKAGES)].concat(),
             (Installer::Pamac, Action::Update) => v(&["pamac-manager", "--updates"]),
             (Installer::Pamac, Action::Git) => v(&["pamac-installer", "--build", GIT_PACKAGE]),
-            (Installer::PackageKit, Action::Install) => [v(&["pkcon", "install"]), v(&PACKAGES)].concat(),
+            (Installer::PackageKit, Action::Install) => {
+                [v(&["pkcon", "install"]), v(&PACKAGES)].concat()
+            }
             (Installer::PackageKit, Action::Update) => v(&["pkcon", "update"]),
-            (Installer::PackageKit, Action::Git) => bail!("PackageKit can't build AUR packages; use an AUR helper"),
+            (Installer::PackageKit, Action::Git) => {
+                bail!("PackageKit can't build AUR packages; use an AUR helper")
+            }
             (Installer::Terminal, action) => {
                 let root = if on_path("run0") { "run0" } else { "sudo" };
                 let line = match action {
@@ -85,7 +89,10 @@ impl Installer {
 
 pub(crate) fn run(action: Action, dry_run: bool) -> anyhow::Result<()> {
     let Some(installer) = Installer::detect() else {
-        bail!("no package installer found (pamac, PackageKit or pacman); install {} yourself", PACKAGES.join(" and "));
+        bail!(
+            "no package installer found (pamac, PackageKit or pacman); install {} yourself",
+            PACKAGES.join(" and ")
+        );
     };
     if action == Action::Which {
         println!("{}", installer.name());
@@ -119,5 +126,10 @@ fn terminal() -> Option<Vec<String>> {
         ("xterm", &["-e"]),
     ];
     let (bin, args) = TERMINALS.into_iter().find(|(bin, _)| on_path(bin))?;
-    Some(std::iter::once(bin).chain(args.iter().copied()).map(String::from).collect())
+    Some(
+        std::iter::once(bin)
+            .chain(args.iter().copied())
+            .map(String::from)
+            .collect(),
+    )
 }

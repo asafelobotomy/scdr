@@ -17,11 +17,20 @@ fn write_new(path: &Path, text: &str, force: bool) -> std::io::Result<()> {
     opts.open(path)?.write_all(text.as_bytes())
 }
 
-pub fn import(from: ImportFrom, output: Option<PathBuf>, force: bool, paths: &PathArgs) -> anyhow::Result<()> {
+pub fn import(
+    from: ImportFrom,
+    output: Option<PathBuf>,
+    force: bool,
+    paths: &PathArgs,
+) -> anyhow::Result<()> {
     // Imported rules go first, so by default skip names our rules already cover.
     let current = paths.load().ok();
     let imp = match from {
-        ImportFrom::Ananicy { dir, only, keep_overlaps } => {
+        ImportFrom::Ananicy {
+            dir,
+            only,
+            keep_overlaps,
+        } => {
             let covered = |name: &str| {
                 !keep_overlaps
                     && current
@@ -39,9 +48,14 @@ pub fn import(from: ImportFrom, output: Option<PathBuf>, force: bool, paths: &Pa
     let toml = imp.to_toml();
     match &output {
         Some(path) if !force && path.exists() => {
-            anyhow::bail!("{} already exists; pass --force to overwrite it", path.display())
+            anyhow::bail!(
+                "{} already exists; pass --force to overwrite it",
+                path.display()
+            )
         }
-        Some(path) => write_new(path, &toml, force).with_context(|| format!("writing {}", path.display()))?,
+        Some(path) => {
+            write_new(path, &toml, force).with_context(|| format!("writing {}", path.display()))?
+        }
         None => print!("{toml}"),
     }
     eprintln!(
@@ -49,7 +63,9 @@ pub fn import(from: ImportFrom, output: Option<PathBuf>, force: bool, paths: &Pa
         imp.profile_count(),
         imp.rule_count(),
         imp.pattern_count(),
-        output.map(|p| format!(" into {}", p.display())).unwrap_or_default()
+        output
+            .map(|p| format!(" into {}", p.display()))
+            .unwrap_or_default()
     );
     if !imp.skipped.is_empty() {
         eprintln!("not imported ({}):", imp.skipped.len());

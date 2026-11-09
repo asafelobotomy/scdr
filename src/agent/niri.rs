@@ -12,7 +12,8 @@ pub fn available() -> bool {
 }
 
 pub async fn watch(shared: Shared) -> anyhow::Result<()> {
-    let path = std::env::var_os("NIRI_SOCKET").ok_or_else(|| anyhow::anyhow!("NIRI_SOCKET not set"))?;
+    let path =
+        std::env::var_os("NIRI_SOCKET").ok_or_else(|| anyhow::anyhow!("NIRI_SOCKET not set"))?;
     let mut stream = UnixStream::connect(path).await?;
     stream.write_all(b"\"EventStream\"\n").await?;
     let mut lines = BufReader::new(stream).lines();
@@ -37,12 +38,24 @@ impl Windows {
         let before = self.focused_pid();
         if let Some(e) = event.get("WindowsChanged") {
             self.pids.clear();
-            for w in e.get("windows").and_then(Value::as_array).into_iter().flatten() {
+            for w in e
+                .get("windows")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 self.window(w);
             }
-        } else if let Some(w) = event.get("WindowOpenedOrChanged").and_then(|e| e.get("window")) {
+        } else if let Some(w) = event
+            .get("WindowOpenedOrChanged")
+            .and_then(|e| e.get("window"))
+        {
             self.window(w);
-        } else if let Some(id) = event.get("WindowClosed").and_then(|e| e.get("id")).and_then(Value::as_u64) {
+        } else if let Some(id) = event
+            .get("WindowClosed")
+            .and_then(|e| e.get("id"))
+            .and_then(Value::as_u64)
+        {
             self.pids.remove(&id);
         } else if let Some(e) = event.get("WindowFocusChanged") {
             self.focused = e.get("id").and_then(Value::as_u64);
@@ -52,7 +65,9 @@ impl Windows {
     }
 
     fn window(&mut self, w: &Value) {
-        let Some(id) = w.get("id").and_then(Value::as_u64) else { return };
+        let Some(id) = w.get("id").and_then(Value::as_u64) else {
+            return;
+        };
         if let Some(pid) = w.get("pid").and_then(Value::as_u64) {
             self.pids.insert(id, pid as u32);
         }
@@ -79,8 +94,15 @@ mod tests {
         ]}});
         assert_eq!(w.apply(&json!({"Ok": "Handled"})), None);
         assert_eq!(w.apply(&initial), Some(200));
-        assert_eq!(w.apply(&json!({"WindowFocusChanged": {"id": 1}})), Some(100));
-        assert_eq!(w.apply(&json!({"WindowFocusChanged": {"id": 1}})), None, "no change");
+        assert_eq!(
+            w.apply(&json!({"WindowFocusChanged": {"id": 1}})),
+            Some(100)
+        );
+        assert_eq!(
+            w.apply(&json!({"WindowFocusChanged": {"id": 1}})),
+            None,
+            "no change"
+        );
         assert_eq!(
             w.apply(&json!({"WindowOpenedOrChanged": {"window": {"id": 3, "pid": 300, "is_focused": true}}})),
             Some(300)

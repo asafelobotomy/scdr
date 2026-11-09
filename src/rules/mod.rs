@@ -76,7 +76,11 @@ impl Rule {
             if list.is_empty() {
                 return Err(format!("{key} is an empty list"));
             }
-            let _ = write!(conditions, "{}{key}={list:?}", if conditions.is_empty() { "" } else { " " });
+            let _ = write!(
+                conditions,
+                "{}{key}={list:?}",
+                if conditions.is_empty() { "" } else { " " }
+            );
             Matcher::compile(list).map(Some)
         };
 
@@ -96,7 +100,11 @@ impl Rule {
             not_ancestor: field("not_ancestor", &raw.not_ancestor)?,
         };
         if let Some(uids) = &raw.uid {
-            let _ = write!(conditions, "{}uid={uids:?}", if conditions.is_empty() { "" } else { " " });
+            let _ = write!(
+                conditions,
+                "{}uid={uids:?}",
+                if conditions.is_empty() { "" } else { " " }
+            );
         }
 
         let positive = m.name.is_some()
@@ -107,7 +115,10 @@ impl Rule {
             || m.ancestor.is_some()
             || m.uid.is_some();
         if !positive {
-            return Err("rule needs at least one of name, exe, cmdline, cgroup, parent, ancestor, uid".into());
+            return Err(
+                "rule needs at least one of name, exe, cmdline, cgroup, parent, ancestor, uid"
+                    .into(),
+            );
         }
 
         Ok(Rule {
@@ -136,17 +147,25 @@ impl Rule {
         if m.uid.as_ref().is_some_and(|u| !u.contains(&p.uid)) {
             return false;
         }
-        if !pos(&m.cgroup, &|x| x.is_match(&p.cgroup)) || !neg(&m.not_cgroup, &|x| x.is_match(&p.cgroup)) {
+        if !pos(&m.cgroup, &|x| x.is_match(&p.cgroup))
+            || !neg(&m.not_cgroup, &|x| x.is_match(&p.cgroup))
+        {
             return false;
         }
         if m.cmdline.is_some() || m.not_cmdline.is_some() {
             let cmd = p.cmdline_string();
-            if !pos(&m.cmdline, &|x| x.is_match(&cmd)) || !neg(&m.not_cmdline, &|x| x.is_match(&cmd)) {
+            if !pos(&m.cmdline, &|x| x.is_match(&cmd))
+                || !neg(&m.not_cmdline, &|x| x.is_match(&cmd))
+            {
                 return false;
             }
         }
         if m.parent.is_some() || m.not_parent.is_some() {
-            let parent: Vec<&str> = lineage.chain().first().map(|a| a.names().collect()).unwrap_or_default();
+            let parent: Vec<&str> = lineage
+                .chain()
+                .first()
+                .map(|a| a.names().collect())
+                .unwrap_or_default();
             if !pos(&m.parent, &|x| x.any(&parent)) || !neg(&m.not_parent, &|x| x.any(&parent)) {
                 return false;
             }
@@ -185,16 +204,27 @@ pub struct Lineage {
 
 impl Lineage {
     pub fn new(p: &ProcInfo) -> Self {
-        Lineage { ppid: p.ppid, chain: None }
+        Lineage {
+            ppid: p.ppid,
+            chain: None,
+        }
     }
 
     /// Pre-filled from comm names, for tests and importers.
     pub fn known(chain: Vec<String>) -> Self {
-        Self::known_with_exe(chain.into_iter().map(|comm| Ancestor { comm, exe: None }).collect())
+        Self::known_with_exe(
+            chain
+                .into_iter()
+                .map(|comm| Ancestor { comm, exe: None })
+                .collect(),
+        )
     }
 
     pub fn known_with_exe(chain: Vec<Ancestor>) -> Self {
-        Lineage { ppid: 0, chain: Some(chain) }
+        Lineage {
+            ppid: 0,
+            chain: Some(chain),
+        }
     }
 
     pub fn chain(&mut self) -> &[Ancestor] {
@@ -203,8 +233,13 @@ impl Lineage {
             let mut out = Vec::new();
             let mut pid = ppid;
             while pid > 1 && out.len() < 32 {
-                let Some(comm) = crate::procfs::comm(pid) else { break };
-                out.push(Ancestor { comm, exe: crate::procfs::exe_name(pid) });
+                let Some(comm) = crate::procfs::comm(pid) else {
+                    break;
+                };
+                out.push(Ancestor {
+                    comm,
+                    exe: crate::procfs::exe_name(pid),
+                });
                 pid = crate::procfs::Stat::read(pid).map(|s| s.ppid).unwrap_or(0);
             }
             out

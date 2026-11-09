@@ -2,9 +2,9 @@
 
 use anyhow::Context;
 use clap::Parser;
+use futures_util::{Stream, StreamExt};
 use scdr::config::{Config, Paths};
 use scdr::dbus::{BUS_NAME, Daemon, OBJECT_PATH, PowerProfilesProxy};
-use futures_util::{Stream, StreamExt};
 use scdr::policy::Policy;
 use scdr::service::{Service, cpu_some_avg10};
 use scdr::watcher;
@@ -42,8 +42,7 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .with_writer(std::io::stderr)
         // No colour codes in the journal.
@@ -53,6 +52,18 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
+    // Exit 3 (scdrd.service: RestartPreventExitStatus=3) rather than a
+    // restart loop while another priority daemon runs.
+    let rivals = scdr::rivals::running(std::path::Path::new("/proc"));
+    if !rivals.is_empty() && !args.dry_run {
+        tracing::error!(
+            "{} is running: it and scdr would undo each other's priorities. Import its rules \
+             (scdrctl import ananicy /etc/ananicy.d --output /etc/scdr/rules.d/50-ananicy.toml), \
+             then stop and disable it (systemctl disable --now <its unit>) and start scdrd again",
+            rivals.join(" and ")
+        );
+        std::process::exit(3);
+    }
     let paths = Paths {
         etc: args.etc_dir,
         share: args.share_dir,
@@ -143,7 +154,8 @@ async fn main() -> anyhow::Result<()> {
         (s, true) => Some(Duration::from_secs(s.clamp(1, 5))),
         (s, false) => Some(Duration::from_secs(s)),
     };
-    let mut rescan_every = rescan_interval(service.lock().unwrap().config.system.rescan_secs, polling);
+    let mut rescan_every =
+        rescan_interval(service.lock().unwrap().config.system.rescan_secs, polling);
     let mut next_rescan = rescan_every.map(|d| Instant::now() + d);
     let far = || Instant::now() + Duration::from_secs(3600);
 
@@ -266,7 +278,10 @@ fn load_config(paths: &Paths) -> anyhow::Result<Config> {
     }
     match Config::load(paths) {
         Ok(c) => {
-            tracing::error!("{err}; moved the widget's settings to {} and started without them", bad.display());
+            tracing::error!(
+                "{err}; moved the widget's settings to {} and started without them",
+                bad.display()
+            );
             Ok(c)
         }
         Err(_) => {
@@ -278,10 +293,15 @@ fn load_config(paths: &Paths) -> anyhow::Result<Config> {
 }
 
 /// Samples CPU pressure, then brings the scheduler and EEVDF knobs in line.
-async fn policy_step(policy: &mut Policy, bus: Option<&zbus::Connection>, service: &Arc<Mutex<Service>>) {
+async fn policy_step(
+    policy: &mut Policy,
+    bus: Option<&zbus::Connection>,
+    service: &Arc<Mutex<Service>>,
+) {
     if service.lock().unwrap().is_paused() {
         policy.restore(bus).await; // a no-op once restored
-        service.lock().unwrap().policy_report = vec!["paused: scheduler and EEVDF knobs left as they were".into()];
+        service.lock().unwrap().policy_report =
+            vec!["paused: scheduler and EEVDF knobs left as they were".into()];
         return;
     }
     policy.forget_override_if_asked();
@@ -291,9 +311,16 @@ async fn policy_step(policy: &mut Policy, bus: Option<&zbus::Connection>, servic
             svc.set_cpu_pressure(avg10);
         }
         let power = svc.power_profile().map(str::to_owned);
-        (svc.config.sched_ext.clone(), svc.config.eevdf.clone(), power, svc.gaming())
+        (
+            svc.config.sched_ext.clone(),
+            svc.config.eevdf.clone(),
+            power,
+            svc.gaming(),
+        )
     };
-    let report = policy.sync(bus, &sched_ext, &eevdf, power.as_deref(), gaming).await;
+    let report = policy
+        .sync(bus, &sched_ext, &eevdf, power.as_deref(), gaming)
+        .await;
     service.lock().unwrap().policy_report = report;
 }
 
@@ -348,7 +375,15 @@ async fn publish_state(conn: &zbus::Connection, service: &Arc<Mutex<Service>>, l
         return;
     }
     *last = now;
-    if let Ok(iface) = conn.object_server().interface::<_, Daemon>(OBJECT_PATH).await {
-        let _ = iface.get().await.state_changed(iface.signal_emitter()).await;
+    if let Ok(iface) = conn
+        .object_server()
+        .interface::<_, Daemon>(OBJECT_PATH)
+        .await
+    {
+        let _ = iface
+            .get()
+            .await
+            .state_changed(iface.signal_emitter())
+            .await;
     }
 }

@@ -37,15 +37,25 @@ pub(super) type Sessions = HashMap<String, Session>;
 impl Service {
     /// The focused window of `uid`'s session is `pid`. Only app units
     /// (`app.slice`) are boosted, not the desktop's own services.
+    /// `pid` 0: no app is focused (the screen is locked).
     pub fn set_foreground(&mut self, uid: u32, sender: &str, pid: u32) -> Result<(), String> {
-        let info = owned_process(uid, pid)?;
-        let in_app_slice = info.cgroup.contains(&format!("/user@{uid}.service/app.slice/"));
-        let new = (in_app_slice && UnitId::from_cgroup(&info.cgroup).is_some())
-            .then(|| (info.cgroup.clone(), pid));
+        let new = if pid == 0 {
+            None
+        } else {
+            let info = owned_process(uid, pid)?;
+            let in_app_slice = info
+                .cgroup
+                .contains(&format!("/user@{uid}.service/app.slice/"));
+            (in_app_slice && UnitId::from_cgroup(&info.cgroup).is_some())
+                .then(|| (info.cgroup.clone(), pid))
+        };
 
         // Without a focused app the background role can't be placed; if
         // pressure came first (e.g. right after a restart), re-check every app.
-        let first = !self.sessions.values().any(|s| s.uid == uid && s.foreground.is_some());
+        let first = !self
+            .sessions
+            .values()
+            .any(|s| s.uid == uid && s.foreground.is_some());
         let session = self.session(uid, sender);
         let old = std::mem::replace(&mut session.foreground, new.clone());
         let mut affected = Vec::new();
@@ -122,7 +132,11 @@ impl Service {
 
     /// The role profile for a process no rule matched, if any.
     pub(super) fn role_match(&self, info: &ProcInfo) -> Option<(RuleRef, NamedProfile)> {
-        let sessions: Vec<&Session> = self.sessions.values().filter(|s| s.uid == info.uid).collect();
+        let sessions: Vec<&Session> = self
+            .sessions
+            .values()
+            .filter(|s| s.uid == info.uid)
+            .collect();
         if sessions.is_empty() {
             return None;
         }
@@ -134,8 +148,12 @@ impl Service {
         });
         let active = |role: Role| -> bool {
             match role {
-                Role::Game => sessions.iter().any(|s| s.games.get(&info.pid) == Some(&info.start_time)),
-                Role::Audio => sessions.iter().any(|s| s.audio.get(&info.pid) == Some(&info.start_time)),
+                Role::Game => sessions
+                    .iter()
+                    .any(|s| s.games.get(&info.pid) == Some(&info.start_time)),
+                Role::Audio => sessions
+                    .iter()
+                    .any(|s| s.audio.get(&info.pid) == Some(&info.start_time)),
                 Role::Foreground => focused,
                 // Never the focused app, even with the foreground role off.
                 Role::Background => {
@@ -164,7 +182,9 @@ impl Service {
             .map(|s| SessionReport {
                 uid: s.uid,
                 foreground: s.foreground.as_ref().map(|(cg, pid)| {
-                    let unit = UnitId::from_cgroup(cg).map(|u| u.unit).unwrap_or_else(|| cg.clone());
+                    let unit = UnitId::from_cgroup(cg)
+                        .map(|u| u.unit)
+                        .unwrap_or_else(|| cg.clone());
                     format!("{unit} (window pid {pid})")
                 }),
                 audio: s.audio.keys().copied().collect(),
@@ -178,7 +198,10 @@ impl Service {
     fn session(&mut self, uid: u32, sender: &str) -> &mut Session {
         self.sessions
             .entry(sender.to_owned())
-            .or_insert_with(|| Session { uid, ..Default::default() })
+            .or_insert_with(|| Session {
+                uid,
+                ..Default::default()
+            })
     }
 
     fn role_pids(&self) -> Vec<u32> {
@@ -202,7 +225,9 @@ impl Service {
             self.evaluate(pid, Trigger::Role);
             let after = self.profile_of(pid);
             if before != after {
-                *moved.entry(after.unwrap_or_else(|| "restored".into())).or_default() += 1;
+                *moved
+                    .entry(after.unwrap_or_else(|| "restored".into()))
+                    .or_default() += 1;
             }
         }
         if !moved.is_empty() {

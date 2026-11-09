@@ -69,7 +69,11 @@ impl Policy {
             }
         };
         // EEVDF knobs only matter while no sched_ext scheduler runs.
-        let want = if ext_running { Eevdf::default() } else { eevdf.for_power(power_profile) };
+        let want = if ext_running {
+            Eevdf::default()
+        } else {
+            eevdf.for_power(power_profile)
+        };
         report.push(self.sync_eevdf(&want));
         report
     }
@@ -98,7 +102,9 @@ impl Policy {
         self.scx_original.get_or_insert_with(|| current.clone());
 
         if self.scx_applied.as_ref().is_some_and(|a| *a != current) {
-            tracing::info!("sched_ext: switched to {current} by hand; leaving it until scdr's choice changes");
+            tracing::info!(
+                "sched_ext: switched to {current} by hand; leaving it until scdr's choice changes"
+            );
             self.scx_applied = None;
             self.scx_overridden = Some(want.clone());
         }
@@ -121,13 +127,19 @@ impl Policy {
     }
 
     async fn restore_scx(&mut self, bus: &zbus::Connection) {
-        let (Some(applied), Some(original)) = (self.scx_applied.take(), self.scx_original.clone()) else {
+        let (Some(applied), Some(original)) = (self.scx_applied.take(), self.scx_original.clone())
+        else {
             return;
         };
-        let Ok(loader) = loader(bus).await else { return };
+        let Ok(loader) = loader(bus).await else {
+            return;
+        };
         let now = current(&loader).await.ok();
         // Never start one over a scheduler someone else loaded meanwhile.
-        if let Some(line) = now.as_ref().and_then(|c| external_scheduler(c, crate::system::sched_ext().as_ref())) {
+        if let Some(line) = now
+            .as_ref()
+            .and_then(|c| external_scheduler(c, crate::system::sched_ext().as_ref()))
+        {
             tracing::info!("not restoring {original}: {line}");
             return;
         }
@@ -144,14 +156,20 @@ impl Policy {
         let Some(current) = current else {
             return "eevdf: debugfs not available".into();
         };
-        let original = self.eevdf_original.get_or_insert_with(|| current.clone()).clone();
+        let original = self
+            .eevdf_original
+            .get_or_insert_with(|| current.clone())
+            .clone();
         // Fields we no longer want go back to their original values.
         let target = Eevdf {
-            base_slice_us: want.base_slice_us.or_else(|| {
-                self.eevdf_applied.base_slice_us.and(original.base_slice_us)
-            }),
+            base_slice_us: want
+                .base_slice_us
+                .or_else(|| self.eevdf_applied.base_slice_us.and(original.base_slice_us)),
             preempt: want.preempt.clone().or_else(|| {
-                self.eevdf_applied.preempt.as_ref().and(original.preempt.clone())
+                self.eevdf_applied
+                    .preempt
+                    .as_ref()
+                    .and(original.preempt.clone())
             }),
         };
         write_eevdf(&current, &target);
@@ -161,7 +179,11 @@ impl Policy {
             "eevdf: base_slice={}us preempt={}{}",
             now.base_slice_us.map_or("?".into(), |s| s.to_string()),
             now.preempt.as_deref().unwrap_or("?"),
-            if *want == Eevdf::default() { "" } else { " (by scdr)" }
+            if *want == Eevdf::default() {
+                ""
+            } else {
+                " (by scdr)"
+            }
         )
     }
 
@@ -226,7 +248,10 @@ async fn current(loader: &LoaderProxy<'_>) -> zbus::Result<SchedChoice> {
     if name == "unknown" || name.is_empty() {
         return Ok(SchedChoice::Eevdf);
     }
-    Ok(SchedChoice::Ext { name, mode: loader.scheduler_mode().await? })
+    Ok(SchedChoice::Ext {
+        name,
+        mode: loader.scheduler_mode().await?,
+    })
 }
 
 async fn switch(loader: &LoaderProxy<'_>, to: &SchedChoice) -> zbus::Result<()> {
@@ -238,13 +263,18 @@ async fn switch(loader: &LoaderProxy<'_>, to: &SchedChoice) -> zbus::Result<()> 
 
 /// Status line for a sched_ext scheduler the kernel runs while scx_loader
 /// (`loader`) reports none, i.e. one started outside scdr and scx_loader.
-fn external_scheduler(loader: &SchedChoice, kernel: Option<&crate::system::SchedExt>) -> Option<String> {
+fn external_scheduler(
+    loader: &SchedChoice,
+    kernel: Option<&crate::system::SchedExt>,
+) -> Option<String> {
     let kernel = kernel.filter(|k| k.is_active())?;
     if *loader != SchedChoice::Eevdf {
         return None;
     }
     let name = kernel.ops.as_deref().unwrap_or("unknown");
-    Some(format!("sched_ext: {name} (started outside scdr; left alone)"))
+    Some(format!(
+        "sched_ext: {name} (started outside scdr; left alone)"
+    ))
 }
 
 fn read_eevdf() -> Option<Eevdf> {
@@ -264,12 +294,19 @@ fn active_preempt(s: &str) -> Option<String> {
 }
 
 fn write_eevdf(current: &Eevdf, target: &Eevdf) {
-    if let Some(us) = target.base_slice_us.filter(|t| Some(*t) != current.base_slice_us) {
+    if let Some(us) = target
+        .base_slice_us
+        .filter(|t| Some(*t) != current.base_slice_us)
+    {
         if let Err(e) = fs::write(BASE_SLICE, (u64::from(us) * 1000).to_string()) {
             tracing::warn!("eevdf: can't set base_slice_ns: {e}");
         }
     }
-    if let Some(p) = target.preempt.as_ref().filter(|p| Some(*p) != current.preempt.as_ref()) {
+    if let Some(p) = target
+        .preempt
+        .as_ref()
+        .filter(|p| Some(*p) != current.preempt.as_ref())
+    {
         if let Err(e) = fs::write(PREEMPT, p) {
             tracing::warn!("eevdf: can't set preempt={p}: {e}");
         }
@@ -280,7 +317,10 @@ fn write_eevdf(current: &Eevdf, target: &Eevdf) {
 mod tests {
     #[test]
     fn parses_preempt_mode() {
-        assert_eq!(super::active_preempt("none voluntary (full) lazy\n").as_deref(), Some("full"));
+        assert_eq!(
+            super::active_preempt("none voluntary (full) lazy\n").as_deref(),
+            Some("full")
+        );
         assert_eq!(super::active_preempt("none"), None);
     }
 
@@ -298,9 +338,15 @@ mod tests {
             Some("sched_ext: devbox (started outside scdr; left alone)")
         );
         // scx_loader's own scheduler, nothing loaded, or no sched_ext kernel.
-        let bpfland = SchedChoice::Ext { name: "scx_bpfland".into(), mode: 0 };
+        let bpfland = SchedChoice::Ext {
+            name: "scx_bpfland".into(),
+            mode: 0,
+        };
         assert_eq!(external_scheduler(&bpfland, Some(&devbox)), None);
-        assert_eq!(external_scheduler(&SchedChoice::Eevdf, Some(&ext("disabled", None))), None);
+        assert_eq!(
+            external_scheduler(&SchedChoice::Eevdf, Some(&ext("disabled", None))),
+            None
+        );
         assert_eq!(external_scheduler(&SchedChoice::Eevdf, None), None);
     }
 }

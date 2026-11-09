@@ -40,7 +40,11 @@ pub async fn load(session: &zbus::Connection) -> anyhow::Result<()> {
     }
 
     let kwin = ScriptingProxy::new(session).await?;
-    if kwin.is_script_loaded(NAME).await.context("KWin is not running")? {
+    if kwin
+        .is_script_loaded(NAME)
+        .await
+        .context("KWin is not running")?
+    {
         kwin.unload_script(NAME).await?;
     }
     let id = kwin.load_script(&path.to_string_lossy(), NAME).await?;
@@ -69,7 +73,9 @@ fn backoff(attempt: u32) -> Duration {
 pub async fn watch(session: zbus::Connection) -> anyhow::Result<()> {
     let dbus = zbus::fdo::DBusProxy::new(&session).await?;
     // Subscribe before checking, so an appearance in between isn't missed.
-    let mut changes = dbus.receive_name_owner_changed_with_args(&[(0, KWIN)]).await?;
+    let mut changes = dbus
+        .receive_name_owner_changed_with_args(&[(0, KWIN)])
+        .await?;
     let mut pending = dbus.name_has_owner(KWIN.try_into()?).await?;
     let mut attempt = 0u32;
     loop {

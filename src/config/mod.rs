@@ -18,10 +18,10 @@ mod profile;
 mod roles;
 
 use crate::rules::{Exceptions, RuleSet};
-pub use profile::{NamedProfile, Profile, valid_nice, valid_oom_score_adj};
 pub use policy::{Eevdf, EevdfConfig, Pressure, SchedChoice, SchedExt};
-pub use roles::{Role, RoleSet, Roles};
+pub use profile::{NamedProfile, Profile, valid_nice, valid_oom_score_adj};
 use profile::{RawProfile, resolve_profile};
+pub use roles::{Role, RoleSet, Roles};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -34,8 +34,14 @@ const RULES_DIR: &str = "rules.d";
 
 #[derive(Debug)]
 pub enum ConfigError {
-    Io { path: PathBuf, source: std::io::Error },
-    Invalid { path: PathBuf, message: String },
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    Invalid {
+        path: PathBuf,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -267,10 +273,16 @@ impl Config {
             if let Some(s) = raw.system {
                 // Huge values overflow the daemon's timers.
                 if s.rescan_secs.is_some_and(|v| v > MAX_RESCAN_SECS) {
-                    return Err(ConfigError::invalid(&path, format!("rescan_secs must be at most {MAX_RESCAN_SECS}")));
+                    return Err(ConfigError::invalid(
+                        &path,
+                        format!("rescan_secs must be at most {MAX_RESCAN_SECS}"),
+                    ));
                 }
                 if s.exec_recheck_ms.is_some_and(|v| v > MAX_EXEC_RECHECK_MS) {
-                    return Err(ConfigError::invalid(&path, format!("exec_recheck_ms must be at most {MAX_EXEC_RECHECK_MS}")));
+                    return Err(ConfigError::invalid(
+                        &path,
+                        format!("exec_recheck_ms must be at most {MAX_EXEC_RECHECK_MS}"),
+                    ));
                 }
                 system.autogroup = s.autogroup.or(system.autogroup);
                 system.rescan_secs = s.rescan_secs.unwrap_or(system.rescan_secs);
@@ -311,7 +323,10 @@ impl Config {
         let exceptions = Exceptions::compile(&exceptions)
             .map_err(|e| ConfigError::invalid(Path::new("[exceptions]"), e))?;
         let roles = roles::resolve(
-            raw_roles.iter_mut().map(|(p, r)| (p.as_path(), std::mem::take(r))).collect(),
+            raw_roles
+                .iter_mut()
+                .map(|(p, r)| (p.as_path(), std::mem::take(r)))
+                .collect(),
             &profiles,
         )?;
 

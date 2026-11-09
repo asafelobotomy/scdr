@@ -80,7 +80,12 @@ pub fn run(job: UnitJob) -> UnitDone {
                 Some(k) => k,
                 None => match units::get(&id) {
                     Ok(w) => (w, w),
-                    Err(error) => return UnitDone::Failed { id, error: format!("can't read weights: {error}") },
+                    Err(error) => {
+                        return UnitDone::Failed {
+                            id,
+                            error: format!("can't read weights: {error}"),
+                        };
+                    }
                 },
             };
             let (want, kept) = plan(original, cpu, io);
@@ -88,7 +93,10 @@ pub fn run(job: UnitJob) -> UnitDone {
                 if dry_run {
                     tracing::info!("{id}: would set {want} (was {original})");
                 } else if let Err(e) = units::set(&id, &want, &current) {
-                    return UnitDone::Failed { id, error: format!("can't set {want}: {e}") };
+                    return UnitDone::Failed {
+                        id,
+                        error: format!("can't set {want}: {e}"),
+                    };
                 } else {
                     tracing::info!("{id}: set {want} for {profile} (was {original})");
                 }
@@ -129,15 +137,20 @@ pub fn run(job: UnitJob) -> UnitDone {
 /// ends once every sender of the returned channel is dropped.
 pub fn spawn_worker(
     done: tokio::sync::mpsc::UnboundedSender<UnitDone>,
-) -> std::io::Result<(std::sync::mpsc::Sender<UnitJob>, std::thread::JoinHandle<()>)> {
+) -> std::io::Result<(
+    std::sync::mpsc::Sender<UnitJob>,
+    std::thread::JoinHandle<()>,
+)> {
     let (tx, rx) = std::sync::mpsc::channel::<UnitJob>();
-    let handle = std::thread::Builder::new().name("scdr-units".into()).spawn(move || {
-        for job in rx {
-            if done.send(run(job)).is_err() {
-                return;
+    let handle = std::thread::Builder::new()
+        .name("scdr-units".into())
+        .spawn(move || {
+            for job in rx {
+                if done.send(run(job)).is_err() {
+                    return;
+                }
             }
-        }
-    })?;
+        })?;
     Ok((tx, handle))
 }
 
@@ -148,11 +161,32 @@ mod tests {
     #[test]
     fn plan_fills_only_defaults() {
         let unset = Weights::default();
-        assert_eq!(plan(unset, Some(300), None).0, Weights { cpu: Some(300), io: None });
+        assert_eq!(
+            plan(unset, Some(300), None).0,
+            Weights {
+                cpu: Some(300),
+                io: None
+            }
+        );
         // baloo ships CPUWeight=1: kept, not overridden.
-        let own = Weights { cpu: Some(1), io: None };
+        let own = Weights {
+            cpu: Some(1),
+            io: None,
+        };
         let (want, kept) = plan(own, Some(20), Some(20));
-        assert_eq!(want, Weights { cpu: Some(1), io: Some(20) });
-        assert_eq!(kept, Weights { cpu: Some(1), io: None });
+        assert_eq!(
+            want,
+            Weights {
+                cpu: Some(1),
+                io: Some(20)
+            }
+        );
+        assert_eq!(
+            kept,
+            Weights {
+                cpu: Some(1),
+                io: None
+            }
+        );
     }
 }

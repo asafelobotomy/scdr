@@ -24,8 +24,18 @@ pub struct Scenario {
 }
 
 impl Scenario {
-    pub fn new(name: &str, probe_nice: Option<i32>, probe_slice_us: Option<u32>, load_nice: Option<i32>) -> Self {
-        Scenario { name: name.into(), probe_nice, probe_slice_us, load_nice }
+    pub fn new(
+        name: &str,
+        probe_nice: Option<i32>,
+        probe_slice_us: Option<u32>,
+        load_nice: Option<i32>,
+    ) -> Self {
+        Scenario {
+            name: name.into(),
+            probe_nice,
+            probe_slice_us,
+            load_nice,
+        }
     }
 }
 
@@ -42,7 +52,12 @@ pub fn default_scenarios() -> Vec<Scenario> {
     // Only root may lower nice below 0.
     if unsafe { libc::geteuid() } == 0 {
         v.push(Scenario::new("probe nice -5 (game)", Some(-5), None, None));
-        v.push(Scenario::new("probe nice -11 + slice 500us (audio)", Some(-11), Some(500), None));
+        v.push(Scenario::new(
+            "probe nice -11 + slice 500us (audio)",
+            Some(-11),
+            Some(500),
+            None,
+        ));
     }
     v
 }
@@ -90,12 +105,14 @@ pub fn run(s: &Scenario, opt: &Options) -> Result {
         .collect();
     std::thread::sleep(Duration::from_millis(300)); // let the load settle
 
-    let (probe_nice, probe_slice, interval, duration) = (s.probe_nice, s.probe_slice_us, opt.interval, opt.duration);
+    let (probe_nice, probe_slice, interval, duration) =
+        (s.probe_nice, s.probe_slice_us, opt.interval, opt.duration);
     let probe = std::thread::spawn(move || {
         let err = set_self(probe_nice, probe_slice).err();
         // SAFETY: prctl with integer arguments; 1 ns slack measures the scheduler, not timers.
         unsafe { libc::prctl(libc::PR_SET_TIMERSLACK, 1, 0, 0, 0) };
-        let mut lat = Vec::with_capacity((duration.as_micros() / interval.as_micros().max(1)) as usize);
+        let mut lat =
+            Vec::with_capacity((duration.as_micros() / interval.as_micros().max(1)) as usize);
         let end = Instant::now() + duration;
         while Instant::now() < end {
             let t0 = Instant::now();
@@ -120,7 +137,11 @@ pub fn run(s: &Scenario, opt: &Options) -> Result {
     errors.dedup();
 
     lat.sort_by(f64::total_cmp);
-    let pct = |p: f64| lat.get(((lat.len() as f64 - 1.0) * p).round() as usize).copied().unwrap_or(0.0);
+    let pct = |p: f64| {
+        lat.get(((lat.len() as f64 - 1.0) * p).round() as usize)
+            .copied()
+            .unwrap_or(0.0)
+    };
     Result {
         scenario: s.clone(),
         samples: lat.len(),
@@ -198,7 +219,11 @@ mod tests {
         let load_nice = (sched::get_attr(tid).unwrap().nice + 1).min(19);
         let r = run(
             &Scenario::new("t", None, Some(1000), Some(load_nice)),
-            &Options { duration: Duration::from_millis(200), interval: Duration::from_millis(1), load_threads: 2 },
+            &Options {
+                duration: Duration::from_millis(200),
+                interval: Duration::from_millis(1),
+                load_threads: 2,
+            },
         );
         assert!(r.samples > 50, "{r:?}");
         assert!(r.p50_us <= r.p99_us && r.p99_us <= r.max_us);

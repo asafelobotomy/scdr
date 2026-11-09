@@ -89,7 +89,11 @@ impl Service {
     }
 
     pub fn set_role_enabled(&mut self, role: Role, enabled: bool) {
-        let changed = if enabled { self.roles_off.remove(&role) } else { self.roles_off.insert(role) };
+        let changed = if enabled {
+            self.roles_off.remove(&role)
+        } else {
+            self.roles_off.insert(role)
+        };
         if changed {
             tracing::info!("{role} role {}", if enabled { "on" } else { "off" });
             self.save_runtime();
@@ -138,7 +142,11 @@ impl Service {
     }
 
     pub fn widget_state(&self) -> WidgetState {
-        let managed = self.procs.values().filter(|e| matches!(e.state, State::Managed(_))).count();
+        let managed = self
+            .procs
+            .values()
+            .filter(|e| matches!(e.state, State::Managed(_)))
+            .count();
         let roles = self.config.roles.for_power(self.power_profile.as_deref());
         WidgetState {
             paused: self.paused,
@@ -150,7 +158,13 @@ impl Service {
             scheduler: self.policy_report.clone(),
             roles: Role::ALL
                 .into_iter()
-                .filter_map(|r| Some((r.to_string(), roles.get(r)?.to_owned(), self.role_enabled(r))))
+                .filter_map(|r| {
+                    Some((
+                        r.to_string(),
+                        roles.get(r)?.to_owned(),
+                        self.role_enabled(r),
+                    ))
+                })
                 .collect(),
             agents: self.sessions.len(),
             boosted: self.process_reports(true),
@@ -160,7 +174,9 @@ impl Service {
     /// Loads persisted pause/role state; call before `startup`.
     pub fn load_runtime(&mut self) {
         let Some(path) = runtime_path() else { return };
-        let Ok(text) = std::fs::read_to_string(&path) else { return };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
         match serde_json::from_str::<Runtime>(&text) {
             Ok(rt) => {
                 self.paused = rt.paused;
@@ -200,7 +216,9 @@ pub(super) fn app_of_cgroup(cgroup: &str) -> Option<String> {
 
 fn app_name(unit: &str) -> Option<String> {
     let base = unit.strip_prefix("app-")?;
-    let base = base.strip_suffix(".scope").or_else(|| base.strip_suffix(".service"))?;
+    let base = base
+        .strip_suffix(".scope")
+        .or_else(|| base.strip_suffix(".service"))?;
     let base = base.split('@').next()?;
     let base = base.strip_prefix("flatpak-").unwrap_or(base);
     // Transient scopes end in "-<random or pid>".
@@ -223,10 +241,22 @@ mod tests {
     #[test]
     fn app_names_from_units() {
         let n = |u| super::app_name(u);
-        assert_eq!(n("app-com.anthropic.Claude-3405.scope").as_deref(), Some("com.anthropic.Claude"));
-        assert_eq!(n("app-org.telegram.desktop@autostart.service").as_deref(), Some("org.telegram.desktop"));
-        assert_eq!(n("app-flatpak-org.mozilla.firefox-12345.scope").as_deref(), Some("org.mozilla.firefox"));
-        assert_eq!(n("app-pamac\\x2dtray\\x2dplasma@autostart.service").as_deref(), Some("pamac-tray-plasma"));
+        assert_eq!(
+            n("app-com.anthropic.Claude-3405.scope").as_deref(),
+            Some("com.anthropic.Claude")
+        );
+        assert_eq!(
+            n("app-org.telegram.desktop@autostart.service").as_deref(),
+            Some("org.telegram.desktop")
+        );
+        assert_eq!(
+            n("app-flatpak-org.mozilla.firefox-12345.scope").as_deref(),
+            Some("org.mozilla.firefox")
+        );
+        assert_eq!(
+            n("app-pamac\\x2dtray\\x2dplasma@autostart.service").as_deref(),
+            Some("pamac-tray-plasma")
+        );
         assert_eq!(n("plasma-kwin_wayland.service"), None);
     }
 }

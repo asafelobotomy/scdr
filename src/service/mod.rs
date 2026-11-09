@@ -184,12 +184,10 @@ impl Service {
             } => {
                 // New threads inherit their creator's settings; only track processes.
                 if child_pid == child_tgid {
-                    let sticky = self
-                        .procs
-                        .get(&parent_tgid)
-                        .and_then(|p| p.sticky.clone());
+                    let sticky = self.procs.get(&parent_tgid).and_then(|p| p.sticky.clone());
                     let inherited = self.inherited_from(parent_tgid);
-                    self.procs.insert(child_pid, Entry::new(parent_tgid, sticky, inherited));
+                    self.procs
+                        .insert(child_pid, Entry::new(parent_tgid, sticky, inherited));
                 } else {
                     self.new_thread(child_tgid, child_pid);
                 }
@@ -243,7 +241,11 @@ impl Service {
     }
 
     pub fn recheck(&mut self, pid: u32, start_time: u64) {
-        if self.procs.get(&pid).is_some_and(|e| e.start_time == start_time) {
+        if self
+            .procs
+            .get(&pid)
+            .is_some_and(|e| e.start_time == start_time)
+        {
             self.evaluate(pid, Trigger::Recheck);
         }
     }
@@ -288,7 +290,8 @@ impl Service {
         if known.is_none() || reused {
             let sticky = self.inherited_sticky(info.ppid);
             let inherited = self.inherited_from(info.ppid);
-            self.procs.insert(pid, Entry::new(info.ppid, sticky, inherited));
+            self.procs
+                .insert(pid, Entry::new(info.ppid, sticky, inherited));
         }
 
         if info.kthread {
@@ -310,7 +313,9 @@ impl Service {
             }
         }
         if trigger == Trigger::Exec && first_look && self.procs[&pid].sticky.is_none() {
-            let inherited = self.procs[&pid].inherited.or_else(|| self.inherited_from(info.ppid));
+            let inherited = self.procs[&pid]
+                .inherited
+                .or_else(|| self.inherited_from(info.ppid));
             if let Some(why) = hand_tuned(pid, info.ppid, inherited.as_ref()) {
                 self.procs.get_mut(&pid).unwrap().sticky = Some(why);
             }
@@ -334,7 +339,12 @@ impl Service {
                 .config
                 .rules
                 .find(&info)
-                .map(|r| (RuleRef::from_rule(r), self.config.profiles[&r.profile].clone()))
+                .map(|r| {
+                    (
+                        RuleRef::from_rule(r),
+                        self.config.profiles[&r.profile].clone(),
+                    )
+                })
                 .or_else(|| self.role_match(&info)),
         };
         let matched = matched.map(|(rule, mut p)| {

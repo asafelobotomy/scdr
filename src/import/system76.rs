@@ -39,14 +39,16 @@ pub fn import(paths: &[PathBuf]) -> anyhow::Result<Import> {
             for a in node.children().map(KdlDocument::nodes).unwrap_or_default() {
                 let name = a.name().value().to_owned();
                 if ROLE_PROFILES.contains(&name.as_str()) {
-                    imp.skipped.push(format!("{name}: scdr covers this with [roles]"));
+                    imp.skipped
+                        .push(format!("{name}: scdr covers this with [roles]"));
                     continue;
                 }
                 if !profiles.contains_key(&name) {
                     order.push(name.clone());
                 }
                 let p = profiles.entry(name.clone()).or_default();
-                p.fields.extend(settings(a.entries(), &mut imp.skipped, &name));
+                p.fields
+                    .extend(settings(a.entries(), &mut imp.skipped, &name));
                 for child in a.children().map(KdlDocument::nodes).unwrap_or_default() {
                     add_condition(p, child, &mut imp.skipped, &name);
                 }
@@ -57,7 +59,9 @@ pub fn import(paths: &[PathBuf]) -> anyhow::Result<Import> {
                 match e.name().value() {
                     "include" => match prop(e, "descends") {
                         Some(d) => imp.launcher(&d),
-                        None => imp.skipped.push("exceptions: include without descends=".into()),
+                        None => imp
+                            .skipped
+                            .push("exceptions: include without descends=".into()),
                     },
                     name => imp.exception(name),
                 }
@@ -104,10 +108,21 @@ fn prop(node: &KdlNode, key: &str) -> Option<String> {
 
 fn add_condition(p: &mut Profile, child: &KdlNode, skipped: &mut Vec<String>, profile: &str) {
     let name = child.name().value();
-    if child.entries().iter().any(|e| ["nice", "sched", "io"].contains(&e.name().map_or("", |n| n.value()))) {
-        skipped.push(format!("{profile}: per-process settings on {name:?} ignored; the profile's apply"));
+    if child
+        .entries()
+        .iter()
+        .any(|e| ["nice", "sched", "io"].contains(&e.name().map_or("", |n| n.value())))
+    {
+        skipped.push(format!(
+            "{profile}: per-process settings on {name:?} ignored; the profile's apply"
+        ));
     }
-    let keys = [("cgroup", "cgroup"), ("parent", "parent"), ("descends", "ancestor"), ("name", "name")];
+    let keys = [
+        ("cgroup", "cgroup"),
+        ("parent", "parent"),
+        ("descends", "ancestor"),
+        ("name", "name"),
+    ];
     match name {
         "include" | "*" | "exclude" => {
             let mut include = Vec::new();
@@ -129,8 +144,12 @@ fn add_condition(p: &mut Profile, child: &KdlNode, skipped: &mut Vec<String>, pr
                 skipped.push(format!("{profile}: {name} without conditions"));
             }
         }
-        path if path.starts_with('/') => p.rules.push(vec![("exe".into(), vec![glob_literal(path)])]),
-        bare => p.rules.push(vec![("name".into(), vec![glob_literal(bare)])]),
+        path if path.starts_with('/') => {
+            p.rules.push(vec![("exe".into(), vec![glob_literal(path)])])
+        }
+        bare => p
+            .rules
+            .push(vec![("name".into(), vec![glob_literal(bare)])]),
     }
 }
 
@@ -138,11 +157,16 @@ fn add_condition(p: &mut Profile, child: &KdlNode, skipped: &mut Vec<String>, pr
 fn settings(entries: &[KdlEntry], skipped: &mut Vec<String>, what: &str) -> Vec<(String, Value)> {
     let mut out = Vec::new();
     for e in entries {
-        let Some(key) = e.name().map(|n| n.value()) else { continue };
+        let Some(key) = e.name().map(|n| n.value()) else {
+            continue;
+        };
         let ty = e.ty().map(|t| t.value());
         let v = e.value();
         let field = match (key, ty) {
-            ("nice", _) => v.as_integer().filter(|n| i64::try_from(*n).is_ok_and(valid_nice)).map(|n| ("nice", n.to_string())),
+            ("nice", _) => v
+                .as_integer()
+                .filter(|n| i64::try_from(*n).is_ok_and(valid_nice))
+                .map(|n| ("nice", n.to_string())),
             ("sched", None) => match v.as_string() {
                 Some(s @ ("batch" | "idle" | "other")) => Some(("sched", quote(s))),
                 _ => None,
@@ -152,10 +176,12 @@ fn settings(entries: &[KdlEntry], skipped: &mut Vec<String>, what: &str) -> Vec<
                 .filter(|p| (1..=99).contains(p))
                 .map(|p| ("sched", quote(&format!("{t}:{p}")))),
             ("io", None) if v.as_string() == Some("idle") => Some(("io", quote("idle"))),
-            ("io", Some(t @ ("best-effort" | "realtime"))) => v.as_integer().filter(|l| (0..=7).contains(l)).map(|l| {
-                let class = if t == "realtime" { "rt" } else { "be" };
-                ("io", quote(&format!("{class}:{l}")))
-            }),
+            ("io", Some(t @ ("best-effort" | "realtime"))) => {
+                v.as_integer().filter(|l| (0..=7).contains(l)).map(|l| {
+                    let class = if t == "realtime" { "rt" } else { "be" };
+                    ("io", quote(&format!("{class}:{l}")))
+                })
+            }
             _ => None,
         };
         match field {
@@ -204,17 +230,31 @@ mod tests {
         let c = imp.validate(&[]).unwrap();
 
         let snd = &c.profiles["s76-sound-server"].profile;
-        assert_eq!((snd.nice, snd.io.unwrap().to_string()), (Some(-15), "rt:0".into()));
-        assert_eq!(c.profiles["s76-games"].profile.sched.unwrap().to_string(), "rr:5");
+        assert_eq!(
+            (snd.nice, snd.io.unwrap().to_string()),
+            (Some(-15), "rt:0".into())
+        );
+        assert_eq!(
+            c.profiles["s76-games"].profile.sched.unwrap().to_string(),
+            "rr:5"
+        );
 
         let mut pw = crate::import::synthetic("pipewire");
         pw.exe = Some("/usr/bin/pipewire".into());
         assert_eq!(c.rules.find(&pw).unwrap().profile, "s76-sound-server");
         let conds: Vec<&str> = c.rules.iter().map(|r| r.conditions.as_str()).collect();
-        assert!(conds.iter().any(|c| c.contains("ancestor=[\"steam\"]") && c.contains("not_name=[\"steamwebhelper\"]")), "{conds:?}");
+        assert!(
+            conds.iter().any(|c| c.contains("ancestor=[\"steam\"]")
+                && c.contains("not_name=[\"steamwebhelper\"]")),
+            "{conds:?}"
+        );
 
         let toml = imp.to_toml();
         assert!(toml.contains("launchers = [\"gamemoderun\"]"), "{toml}");
-        assert!(imp.skipped.iter().any(|s| s.contains("foreground")), "{:?}", imp.skipped);
+        assert!(
+            imp.skipped.iter().any(|s| s.contains("foreground")),
+            "{:?}",
+            imp.skipped
+        );
     }
 }

@@ -33,7 +33,14 @@ impl Service {
                 let target = m.original.with_profile(&profile.profile);
                 if target != m.target || trigger == Trigger::Scan {
                     m.last = apply::apply(pid, &target, &[m.original, m.target], dry_run);
-                    log_apply(info, &profile.name, &m.last, dry_run, target != m.target, trigger);
+                    log_apply(
+                        info,
+                        &profile.name,
+                        &m.last,
+                        dry_run,
+                        target != m.target,
+                        trigger,
+                    );
                 }
                 m.rule = rule;
                 m.profile = profile.name;
@@ -54,13 +61,17 @@ impl Service {
                 idle_state()
             }
             (_, Some((rule, profile))) => match Snapshot::original(pid).map(|o| undo(inherit, o)) {
-                Ok(original) if original.task.cpu.is_protected() && profile.profile.sched.is_none() => {
+                Ok(original)
+                    if original.task.cpu.is_protected() && profile.profile.sched.is_none() =>
+                {
                     State::Excepted("main thread is realtime or sched_ext".into())
                 }
                 Ok(original) => {
                     let target = original.with_profile(&profile.profile);
                     // An inherited boost is scdr's value too, not someone else's.
-                    let owned: Vec<Snapshot> = std::iter::once(original).chain(inherit.map(|i| i.target)).collect();
+                    let owned: Vec<Snapshot> = std::iter::once(original)
+                        .chain(inherit.map(|i| i.target))
+                        .collect();
                     let last = apply::apply(pid, &target, &owned, dry_run);
                     log_apply(info, &profile.name, &last, dry_run, true, trigger);
                     State::Managed(Box::new(Managed {

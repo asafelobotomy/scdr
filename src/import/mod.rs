@@ -29,7 +29,10 @@ pub struct Import {
 
 impl Import {
     pub fn new(source: impl Into<String>) -> Self {
-        Import { source: source.into(), ..Default::default() }
+        Import {
+            source: source.into(),
+            ..Default::default()
+        }
     }
 
     /// Adds a profile and returns the name it got: `name`, or `name-2`,
@@ -63,7 +66,11 @@ impl Import {
     }
 
     pub fn pattern_count(&self) -> usize {
-        self.rules.iter().flat_map(|(_, c)| c).map(|(_, v)| v.len()).sum()
+        self.rules
+            .iter()
+            .flat_map(|(_, c)| c)
+            .map(|(_, v)| v.len())
+            .sum()
     }
 
     pub fn profile_count(&self) -> usize {
@@ -100,7 +107,8 @@ impl Import {
     pub fn validate(&self, with: &[PathBuf]) -> Result<Config, String> {
         let mut sources = Vec::new();
         for path in with {
-            let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let text =
+                std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
             sources.push((path.clone(), text));
         }
         sources.push((PathBuf::from("<import>"), self.to_toml()));
@@ -168,7 +176,10 @@ mod tests {
         let p = imp.profile("p", vec![("nice".into(), "1".into())]);
         assert_eq!(imp.profile("p", vec![]), "p-2");
         assert_eq!(imp.profile("p", vec![]), "p-3");
-        imp.rule(&p, vec![("name".into(), vec![glob_literal("weird[1].exe")])]);
+        imp.rule(
+            &p,
+            vec![("name".into(), vec![glob_literal("weird[1].exe")])],
+        );
         let c = imp.validate(&[]).unwrap();
         assert!(c.rules.find(&synthetic("weird[1].exe")).is_some());
         assert!(c.rules.find(&synthetic("weird1.exe")).is_none());

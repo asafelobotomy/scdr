@@ -7,9 +7,7 @@ use std::io;
 const AUTOGROUP: &str = "/proc/sys/kernel/sched_autogroup_enabled";
 
 pub fn autogroup() -> Option<bool> {
-    fs::read_to_string(AUTOGROUP)
-        .ok()
-        .map(|s| s.trim() != "0")
+    fs::read_to_string(AUTOGROUP).ok().map(|s| s.trim() != "0")
 }
 
 pub fn set_autogroup(enabled: bool) -> io::Result<()> {
@@ -62,8 +60,15 @@ pub fn cpu_governors() -> Vec<String> {
 /// preference when it has one.
 pub fn cpufreq_driver() -> Option<(String, Option<String>)> {
     let dir = std::path::Path::new("/sys/devices/system/cpu/cpu0/cpufreq");
-    let read = |f: &str| fs::read_to_string(dir.join(f)).ok().map(|s| s.trim().to_owned());
-    Some((read("scaling_driver")?, read("energy_performance_preference")))
+    let read = |f: &str| {
+        fs::read_to_string(dir.join(f))
+            .ok()
+            .map(|s| s.trim().to_owned())
+    };
+    Some((
+        read("scaling_driver")?,
+        read("energy_performance_preference"),
+    ))
 }
 
 /// Why uclamp has no effect with this cpufreq driver, if the driver says.
@@ -72,7 +77,10 @@ pub fn cpufreq_driver() -> Option<(String, Option<String>)> {
 pub fn pstate_picks_frequency(driver: Option<&(String, Option<String>)>) -> Option<String> {
     let (name, epp) = driver?;
     (name == "intel_pstate" || name == "amd-pstate-epp").then(|| {
-        let epp = epp.as_deref().map(|e| format!(" (EPP {e})")).unwrap_or_default();
+        let epp = epp
+            .as_deref()
+            .map(|e| format!(" (EPP {e})"))
+            .unwrap_or_default();
         format!("{name} picks frequencies itself{epp}")
     })
 }
@@ -137,11 +145,17 @@ pub fn disks() -> Vec<Disk> {
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            if ["loop", "ram", "zram", "sr"].iter().any(|p| name.starts_with(p)) {
+            if ["loop", "ram", "zram", "sr"]
+                .iter()
+                .any(|p| name.starts_with(p))
+            {
                 return None;
             }
             let sched = fs::read_to_string(e.path().join("queue/scheduler")).ok()?;
-            let dev = fs::read_to_string(e.path().join("dev")).ok()?.trim().to_owned();
+            let dev = fs::read_to_string(e.path().join("dev"))
+                .ok()?
+                .trim()
+                .to_owned();
             Some(Disk {
                 iocost: iocost.iter().any(|(d, on)| *d == dev && *on),
                 scheduler: active_io_scheduler(&sched)?,
@@ -204,8 +218,14 @@ pub fn io_weight_ignored_on() -> Vec<String> {
 mod tests {
     #[test]
     fn parses_active_scheduler() {
-        assert_eq!(super::active_io_scheduler("[none] mq-deadline kyber bfq\n").as_deref(), Some("none"));
-        assert_eq!(super::active_io_scheduler("none mq-deadline kyber [bfq]\n").as_deref(), Some("bfq"));
+        assert_eq!(
+            super::active_io_scheduler("[none] mq-deadline kyber bfq\n").as_deref(),
+            Some("none")
+        );
+        assert_eq!(
+            super::active_io_scheduler("none mq-deadline kyber [bfq]\n").as_deref(),
+            Some("bfq")
+        );
         assert_eq!(super::active_io_scheduler("none\n"), None);
     }
 

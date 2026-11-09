@@ -9,10 +9,13 @@ use tokio::net::UnixStream;
 fn socket_dir() -> Option<PathBuf> {
     let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
     let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
-    [runtime.map(|r| r.join("hypr").join(&sig)), Some(PathBuf::from("/tmp/hypr").join(&sig))]
-        .into_iter()
-        .flatten()
-        .find(|d| d.join(".socket2.sock").exists())
+    [
+        runtime.map(|r| r.join("hypr").join(&sig)),
+        Some(PathBuf::from("/tmp/hypr").join(&sig)),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|d| d.join(".socket2.sock").exists())
 }
 
 pub fn available() -> bool {

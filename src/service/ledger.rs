@@ -43,7 +43,10 @@ struct LedgerUnit {
 
 impl Ledger {
     fn is_empty(&self) -> bool {
-        self.procs.is_empty() && self.units.is_empty() && self.autogroup_original.is_none() && self.iocost_enabled.is_empty()
+        self.procs.is_empty()
+            && self.units.is_empty()
+            && self.autogroup_original.is_none()
+            && self.iocost_enabled.is_empty()
     }
 }
 
@@ -103,7 +106,10 @@ impl Service {
             }
             return;
         }
-        let Ok(json) = serde_json::to_string(&Ledger { boot_id: boot_id(), ..ledger }) else {
+        let Ok(json) = serde_json::to_string(&Ledger {
+            boot_id: boot_id(),
+            ..ledger
+        }) else {
             return;
         };
         if self.ledger_written.as_deref() == Some(json.as_str()) {
@@ -124,7 +130,10 @@ impl Service {
             return;
         };
         if self.dry_run {
-            tracing::info!("would recover changes from an unclean stop ({})", path.display());
+            tracing::info!(
+                "would recover changes from an unclean stop ({})",
+                path.display()
+            );
             return;
         }
         let ledger: Ledger = match serde_json::from_str(&text) {
@@ -207,7 +216,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("scdr-ledger-boot-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("ledger.json");
-        let old = Ledger { boot_id: "not-this-boot".into(), autogroup_original: Some(true), ..Default::default() };
+        let old = Ledger {
+            boot_id: "not-this-boot".into(),
+            autogroup_original: Some(true),
+            ..Default::default()
+        };
         fs::write(&path, serde_json::to_string(&old).unwrap()).unwrap();
         let mut svc = Service::new(Config::from_sources(Vec::new()).unwrap(), false);
         svc.ledger_path = Some(path.clone());

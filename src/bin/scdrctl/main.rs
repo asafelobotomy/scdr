@@ -233,9 +233,20 @@ async fn main() -> anyhow::Result<()> {
                 println!("warning: {w}");
             }
         }
-        Command::Import { from, output, force, paths } => import::import(from, output, force, &paths)?,
+        Command::Import {
+            from,
+            output,
+            force,
+            paths,
+        } => import::import(from, output, force, &paths)?,
         Command::Schedulers { action, dry_run } => install::run(action, dry_run)?,
-        Command::Bench { duration, interval_us, load, repeat, json } => {
+        Command::Bench {
+            duration,
+            interval_us,
+            load,
+            repeat,
+            json,
+        } => {
             let cpus = std::thread::available_parallelism().map_or(4, |n| n.get());
             let opt = scdr::bench::Options {
                 duration: std::time::Duration::from_secs(duration),
@@ -300,7 +311,11 @@ async fn main() -> anyhow::Result<()> {
             println!("resumed");
         }
         Command::Role { role, state } => {
-            daemon().await?.set_role_enabled(&role, state == "on").await.map_err(not_running)?;
+            daemon()
+                .await?
+                .set_role_enabled(&role, state == "on")
+                .await
+                .map_err(not_running)?;
             println!("{role} role {state}");
         }
         Command::Reload => {

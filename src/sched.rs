@@ -84,7 +84,8 @@ const IOPRIO_CLASS_SHIFT: u32 = 13;
 /// Reads the I/O priority of one task. 0 means "none" (derived from nice).
 pub fn get_ioprio(tid: u32) -> io::Result<u32> {
     // SAFETY: plain syscall with integer arguments.
-    let ret = unsafe { libc::syscall(libc::SYS_ioprio_get, IOPRIO_WHO_PROCESS, tid as libc::c_int) };
+    let ret =
+        unsafe { libc::syscall(libc::SYS_ioprio_get, IOPRIO_WHO_PROCESS, tid as libc::c_int) };
     if ret < 0 {
         return Err(io::Error::last_os_error());
     }
@@ -178,11 +179,15 @@ impl FromStr for Policy {
                 "batch" => Ok(Policy::Batch),
                 "idle" => Ok(Policy::Idle),
                 "fifo" | "rr" => Err(format!("{s} needs a priority, e.g. \"{s}:10\"")),
-                _ => Err(format!("unknown sched policy {s:?} (other, batch, idle, fifo:N, rr:N)")),
+                _ => Err(format!(
+                    "unknown sched policy {s:?} (other, batch, idle, fifo:N, rr:N)"
+                )),
             },
             Some(("fifo", p)) => Ok(Policy::Fifo(rt(p)?)),
             Some(("rr", p)) => Ok(Policy::Rr(rt(p)?)),
-            Some(_) => Err(format!("unknown sched policy {s:?} (other, batch, idle, fifo:N, rr:N)")),
+            Some(_) => Err(format!(
+                "unknown sched policy {s:?} (other, batch, idle, fifo:N, rr:N)"
+            )),
         }
     }
 }
@@ -303,7 +308,9 @@ mod tests {
     fn read_own_attr() {
         let tid = unsafe { libc::gettid() } as u32;
         let attr = get_attr(tid).unwrap();
-        assert!(Policy::from_kernel(attr.policy, attr.priority).is_some() || attr.policy == SCHED_EXT);
+        assert!(
+            Policy::from_kernel(attr.policy, attr.priority).is_some() || attr.policy == SCHED_EXT
+        );
     }
 
     #[test]

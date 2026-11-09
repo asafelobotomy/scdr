@@ -33,11 +33,23 @@ fn first_match_wins_and_globs_cross_slashes() {
         cgroup = "/user.slice/*"
         "#,
     );
-    let kwin = proc("kwin_wayland", "/usr/bin/kwin_wayland", "/user.slice/user-1000.slice/session.slice/plasma-kwin_wayland.service");
-    let app = proc("firefox", "/usr/lib/firefox/firefox", "/user.slice/user-1000.slice/user@1000.service/app.slice/app-firefox.scope");
+    let kwin = proc(
+        "kwin_wayland",
+        "/usr/bin/kwin_wayland",
+        "/user.slice/user-1000.slice/session.slice/plasma-kwin_wayland.service",
+    );
+    let app = proc(
+        "firefox",
+        "/usr/lib/firefox/firefox",
+        "/user.slice/user-1000.slice/user@1000.service/app.slice/app-firefox.scope",
+    );
     assert_eq!(c.rules.find(&kwin).unwrap().profile, "a");
     assert_eq!(c.rules.find(&app).unwrap().profile, "b");
-    assert!(c.rules.find(&proc("sshd", "/usr/bin/sshd", "/system.slice/sshd.service")).is_none());
+    assert!(
+        c.rules
+            .find(&proc("sshd", "/usr/bin/sshd", "/system.slice/sshd.service"))
+            .is_none()
+    );
 }
 
 #[test]
@@ -51,7 +63,11 @@ fn negations_and_uid() {
         uid = [0]
         "#,
     );
-    let mut nm = proc("NetworkManager", "/usr/bin/NetworkManager", "/system.slice/NetworkManager.service");
+    let mut nm = proc(
+        "NetworkManager",
+        "/usr/bin/NetworkManager",
+        "/system.slice/NetworkManager.service",
+    );
     nm.uid = 0;
     assert!(c.rules.find(&nm).is_some());
     let mut xorg = proc("Xorg", "/usr/lib/Xorg", "/system.slice/sddm.service");
@@ -76,7 +92,13 @@ fn exe_and_cmdline() {
     let mut game = proc("wine64-preloade", "/usr/bin/wine64-preloader", "");
     game.cmdline = vec!["/home/u/.steam/steam/steamapps/common/Foo/foo.exe".into()];
     assert_eq!(c.rules.find(&game).unwrap().profile, "a");
-    assert_eq!(c.rules.find(&proc("pipewire-pulse", "/usr/bin/pipewire-pulse", "")).unwrap().profile, "b");
+    assert_eq!(
+        c.rules
+            .find(&proc("pipewire-pulse", "/usr/bin/pipewire-pulse", ""))
+            .unwrap()
+            .profile,
+        "b"
+    );
 }
 
 #[test]
@@ -92,8 +114,16 @@ fn ancestor_matches_anywhere_up_the_chain() {
     );
     let game = proc("game.x86_64", "/games/game.x86_64", "");
     let chain = |v: &[&str]| Lineage::known(v.iter().map(|s| s.to_string()).collect());
-    assert!(c.rules.find_with(&game, &mut chain(&["reaper", "steam", "systemd"])).is_some());
-    assert!(c.rules.find_with(&game, &mut chain(&["bash", "systemd"])).is_none());
+    assert!(
+        c.rules
+            .find_with(&game, &mut chain(&["reaper", "steam", "systemd"]))
+            .is_some()
+    );
+    assert!(
+        c.rules
+            .find_with(&game, &mut chain(&["bash", "systemd"]))
+            .is_none()
+    );
     let helper = proc("steamwebhelper", "/x/steamwebhelper", "");
     assert!(c.rules.find_with(&helper, &mut chain(&["steam"])).is_none());
 }
@@ -115,9 +145,20 @@ fn exceptions_and_launchers() {
         "[exceptions]\nname = [\"systemd\"]\nlaunchers = [\"gamemoderun\", \"chrt\"]\n".into(),
     )])
     .unwrap();
-    assert_eq!(c.exceptions.exception(&proc("systemd", "/usr/lib/systemd/systemd", "")), Some("systemd"));
-    assert_eq!(c.exceptions.launcher(&proc("chrt", "/usr/bin/chrt", "")), Some("chrt"));
-    assert!(c.exceptions.launcher(&proc("bash", "/usr/bin/bash", "")).is_none());
+    assert_eq!(
+        c.exceptions
+            .exception(&proc("systemd", "/usr/lib/systemd/systemd", "")),
+        Some("systemd")
+    );
+    assert_eq!(
+        c.exceptions.launcher(&proc("chrt", "/usr/bin/chrt", "")),
+        Some("chrt")
+    );
+    assert!(
+        c.exceptions
+            .launcher(&proc("bash", "/usr/bin/bash", ""))
+            .is_none()
+    );
 }
 
 #[test]
@@ -133,7 +174,10 @@ fn ancestor_and_parent_match_the_exe_name_beyond_comm_truncation() {
         parent = "very-long-launcher-name"
         "#,
     );
-    let long = |comm: &str, exe: &str| Ancestor { comm: comm.into(), exe: Some(exe.into()) };
+    let long = |comm: &str, exe: &str| Ancestor {
+        comm: comm.into(),
+        exe: Some(exe.into()),
+    };
     let p = proc("child", "/usr/bin/child", "");
     let mut lin = Lineage::known_with_exe(vec![
         long("very-long-launc", "very-long-launcher-name"),
@@ -158,5 +202,8 @@ fn warns_about_literal_names_longer_than_comm() {
     );
     let w = c.rules.warnings();
     assert_eq!(w.len(), 1, "{w:?}");
-    assert!(w[0].contains("plasma-browser-integration-host") && w[0].contains("rule #1"), "{w:?}");
+    assert!(
+        w[0].contains("plasma-browser-integration-host") && w[0].contains("rule #1"),
+        "{w:?}"
+    );
 }

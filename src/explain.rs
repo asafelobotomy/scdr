@@ -2,9 +2,9 @@
 //! and by `scdrctl` (offline, without a daemon).
 
 use crate::apply::Snapshot;
+use crate::config::RoleSet;
 use crate::config::{Config, Profile};
 use crate::procfs::ProcInfo;
-use crate::config::RoleSet;
 use crate::service::{RuleRef, SessionReport};
 use crate::system::{self, Disk, SchedExt};
 use crate::units::{UnitId, Weights};
@@ -209,7 +209,14 @@ pub fn format_profile(p: &Profile) -> String {
         put("oom_score_adj", v.to_string());
     }
     if p.has_uclamp() {
-        put("uclamp", format!("{}..{}", p.uclamp_min.unwrap_or(0), p.uclamp_max.unwrap_or(1024)));
+        put(
+            "uclamp",
+            format!(
+                "{}..{}",
+                p.uclamp_min.unwrap_or(0),
+                p.uclamp_max.unwrap_or(1024)
+            ),
+        );
     }
     if let Some(v) = p.cpu_weight {
         put("cpu_weight", v.to_string());
@@ -246,16 +253,27 @@ impl fmt::Display for Explain {
         }
         match &self.rule {
             Some(r) if r.source == "role" => row(f, "role", &r.conditions)?,
-            Some(r) => row(f, "rule", &format!("{} #{}: {}", r.source, r.index, r.conditions))?,
+            Some(r) => row(
+                f,
+                "rule",
+                &format!("{} #{}: {}", r.source, r.index, r.conditions),
+            )?,
             None => {}
         }
         if let Some(p) = &self.profile {
             let chain = if self.profile_chain.len() > 1 {
-                format!(" (inherits {})", self.profile_chain[..self.profile_chain.len() - 1].join(" → "))
+                format!(
+                    " (inherits {})",
+                    self.profile_chain[..self.profile_chain.len() - 1].join(" → ")
+                )
             } else {
                 String::new()
             };
-            row(f, "profile", &format!("{p}{chain}: {}", self.settings.as_deref().unwrap_or("")))?;
+            row(
+                f,
+                "profile",
+                &format!("{p}{chain}: {}", self.settings.as_deref().unwrap_or("")),
+            )?;
         }
         for (k, v) in [
             ("original", &self.original),
@@ -281,8 +299,16 @@ impl fmt::Display for Explain {
 impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mode = if self.dry_run { " (dry run)" } else { "" };
-        writeln!(f, "scdrd {}{mode}, up {}s, events via {}", self.version, self.uptime_secs, self.watcher)?;
-        writeln!(f, "config    {} profiles, {} rules from:", self.profiles, self.rules)?;
+        writeln!(
+            f,
+            "scdrd {}{mode}, up {}s, events via {}",
+            self.version, self.uptime_secs, self.watcher
+        )?;
+        writeln!(
+            f,
+            "config    {} profiles, {} rules from:",
+            self.profiles, self.rules
+        )?;
         for file in &self.config_files {
             writeln!(f, "            {file}")?;
         }
@@ -292,7 +318,11 @@ impl fmt::Display for Status {
             self.tracked, self.managed, self.excepted, self.unmatched
         )?;
         if self.with_errors > 0 {
-            writeln!(f, "          {} managed processes had errors (see explain)", self.with_errors)?;
+            writeln!(
+                f,
+                "          {} managed processes had errors (see explain)",
+                self.with_errors
+            )?;
         }
         for (profile, n) in &self.by_profile {
             writeln!(f, "            {n:>5}  {profile}")?;
@@ -304,9 +334,12 @@ impl fmt::Display for Status {
         };
         writeln!(f, "autogroup {autogroup}")?;
         match &self.sched_ext {
-            Some(s) if s.is_active() => {
-                writeln!(f, "sched_ext {} ({})", s.state, s.ops.as_deref().unwrap_or("?"))?
-            }
+            Some(s) if s.is_active() => writeln!(
+                f,
+                "sched_ext {} ({})",
+                s.state,
+                s.ops.as_deref().unwrap_or("?")
+            )?,
             Some(s) => writeln!(f, "sched_ext {} (EEVDF in use)", s.state)?,
             None => writeln!(f, "sched_ext not supported by this kernel")?,
         }
@@ -331,13 +364,19 @@ impl fmt::Display for Status {
             pct(self.io_pressure)
         )?;
         if self.memory_pressure.is_some_and(|m| m >= 10.0) {
-            writeln!(f, "          memory stalls are high: scdr's levers share CPU and io, they don't free memory")?;
+            writeln!(
+                f,
+                "          memory stalls are high: scdr's levers share CPU and io, they don't free memory"
+            )?;
         }
         for line in &self.policy {
             writeln!(f, "scheduler {line}")?;
         }
         if self.sessions.is_empty() {
-            writeln!(f, "sessions  no session agent connected (scdr-session.service)")?;
+            writeln!(
+                f,
+                "sessions  no session agent connected (scdr-session.service)"
+            )?;
         }
         for s in &self.sessions {
             writeln!(
@@ -354,9 +393,20 @@ impl fmt::Display for Status {
             Some(why) => format!("not applied: {why}"),
             None => "not applied (needs schedutil)".to_owned(),
         };
-        writeln!(f, "uclamp    {uclamp}; governor {}", self.governors.join("/"))?;
+        writeln!(
+            f,
+            "uclamp    {uclamp}; governor {}",
+            self.governors.join("/")
+        )?;
         for d in &self.disks {
-            writeln!(f, "disk      {} [{}{}]: {}", d.name, d.scheduler, if d.iocost { ", iocost" } else { "" }, d.lever())?;
+            writeln!(
+                f,
+                "disk      {} [{}{}]: {}",
+                d.name,
+                d.scheduler,
+                if d.iocost { ", iocost" } else { "" },
+                d.lever()
+            )?;
         }
         Ok(())
     }

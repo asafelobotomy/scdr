@@ -54,7 +54,9 @@ impl Inherited {
         let (t, o) = (&self.target, &self.original);
         let mut s = own;
         let c = &mut s.task.cpu;
-        if (c.policy, c.priority, c.nice) == (t.task.cpu.policy, t.task.cpu.priority, t.task.cpu.nice) {
+        if (c.policy, c.priority, c.nice)
+            == (t.task.cpu.policy, t.task.cpu.priority, t.task.cpu.nice)
+        {
             c.policy = o.task.cpu.policy;
             c.priority = o.task.cpu.priority;
             c.nice = o.task.cpu.nice;
@@ -83,7 +85,14 @@ mod tests {
     fn snap(nice: i32, slice_ns: u64, ioprio: u32, oom: i32) -> Snapshot {
         Snapshot {
             task: TaskState {
-                cpu: CpuState { policy: 0, priority: 0, nice, slice_ns, util_min: 0, util_max: 1024 },
+                cpu: CpuState {
+                    policy: 0,
+                    priority: 0,
+                    nice,
+                    slice_ns,
+                    util_min: 0,
+                    util_max: 1024,
+                },
                 ioprio,
             },
             oom: Some(oom),
@@ -93,7 +102,10 @@ mod tests {
     #[test]
     fn inherited_boost_is_not_an_original() {
         // Parent: nice 0 / oom 200 boosted to nice -2 (foreground).
-        let inh = Inherited { target: snap(-2, 2_000_000, 0, 200), original: snap(0, 0, 0, 200) };
+        let inh = Inherited {
+            target: snap(-2, 2_000_000, 0, 200),
+            original: snap(0, 0, 0, 200),
+        };
         // A child that inherited the boost started out at nice 0.
         assert_eq!(inh.undo(snap(-2, 0, 0, 200)), snap(0, 0, 0, 200));
         // A child someone reniced on purpose keeps its own value.
@@ -103,7 +115,10 @@ mod tests {
     #[test]
     fn only_shared_fields_are_undone() {
         // compositor: nice -5, io be:0, oom -900 over nice 0, io none, oom 0.
-        let inh = Inherited { target: snap(-5, 0, 0x4000, -900), original: snap(0, 0, 0, 0) };
+        let inh = Inherited {
+            target: snap(-5, 0, 0x4000, -900),
+            original: snap(0, 0, 0, 0),
+        };
         // Child kept the inherited oom but set its own nice.
         assert_eq!(inh.undo(snap(3, 0, 0x4000, -900)), snap(3, 0, 0, 0));
     }

@@ -26,7 +26,12 @@ impl Service {
             }
             State::Unmatched => ex.state = "unmatched".into(),
             State::Managed(m) => {
-                ex.state = if self.dry_run { "managed (dry run)" } else { "managed" }.into();
+                ex.state = if self.dry_run {
+                    "managed (dry run)"
+                } else {
+                    "managed"
+                }
+                .into();
                 // What the daemon applied, which may be a role the offline view can't see.
                 ex.rule = Some(m.rule.clone());
                 if let Some(p) = self.config.profiles.get(&m.profile) {
@@ -101,7 +106,12 @@ impl Service {
             dry_run: self.dry_run,
             watcher: self.watcher.into(),
             uptime_secs: self.started.elapsed().as_secs(),
-            config_files: self.config.files.iter().map(|p| p.display().to_string()).collect(),
+            config_files: self
+                .config
+                .files
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect(),
             profiles: self.config.profiles.len(),
             rules: self.config.rules.len(),
             tracked: self.procs.len(),

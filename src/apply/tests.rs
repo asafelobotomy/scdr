@@ -33,7 +33,10 @@ fn profile_overlay() {
     assert_eq!(t.task.cpu.slice_ns, 1_000_000);
     assert_eq!(t.task.ioprio, IoPrio::Idle.to_kernel());
     assert_eq!(t.oom, Some(0));
-    assert_eq!(t.to_string(), "policy=batch nice=5 slice=1000us io=idle oom_score_adj=0");
+    assert_eq!(
+        t.to_string(),
+        "policy=batch nice=5 slice=1000us io=idle oom_score_adj=0"
+    );
 }
 
 #[test]
@@ -98,7 +101,10 @@ fn changes_owned_threads_and_leaves_foreign_ones() {
 
         let dry = apply_threads(&tids, &target, &[original], true);
         assert_eq!((dry.changed, dry.foreign), (1, 1), "{dry:?}");
-        assert_eq!(TaskState::read(plain).unwrap().cpu.nice, original.task.cpu.nice);
+        assert_eq!(
+            TaskState::read(plain).unwrap().cpu.nice,
+            original.task.cpu.nice
+        );
 
         let real = apply_threads(&tids, &target, &[original], false);
         assert_eq!((real.changed, real.foreign), (1, 1), "{real:?}");
@@ -117,7 +123,10 @@ fn changes_owned_threads_and_leaves_foreign_ones() {
         // down unprivileged, so restore to a nice the thread can reach).
         let restore = Snapshot {
             task: TaskState {
-                cpu: CpuState { nice: target.task.cpu.nice, ..original.task.cpu },
+                cpu: CpuState {
+                    nice: target.task.cpu.nice,
+                    ..original.task.cpu
+                },
                 ..original.task
             },
             ..original
@@ -130,6 +139,12 @@ fn changes_owned_threads_and_leaves_foreign_ones() {
 
 #[test]
 fn uclamp_is_set_and_cleared() {
+    // Kernels built without CONFIG_UCLAMP_TASK refuse util clamps; that
+    // sysctl exists only with it.
+    if !std::path::Path::new("/proc/sys/kernel/sched_util_clamp_max").exists() {
+        eprintln!("skipped: this kernel has no uclamp (CONFIG_UCLAMP_TASK)");
+        return;
+    }
     with_helper_threads(|plain, _| {
         let original = Snapshot::original(plain).unwrap();
         if original.task.cpu.policy != sched::SCHED_OTHER {
