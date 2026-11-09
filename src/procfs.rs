@@ -146,6 +146,13 @@ pub fn comm(pid: u32) -> Option<String> {
         .map(|s| s.trim_end_matches('\n').to_owned())
 }
 
+/// File name of `/proc/PID/exe`; unlike comm it is not truncated.
+pub fn exe_name(pid: u32) -> Option<String> {
+    let target = fs::read_link(format!("/proc/{pid}/exe")).ok()?.to_string_lossy().into_owned();
+    let name = basename(target.strip_suffix(" (deleted)").unwrap_or(&target));
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
 fn numeric_entries(dir: &str) -> Vec<u32> {
     let Ok(rd) = fs::read_dir(dir) else {
         return Vec::new();

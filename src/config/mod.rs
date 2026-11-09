@@ -18,7 +18,7 @@ mod profile;
 mod roles;
 
 use crate::rules::{Exceptions, RuleSet};
-pub use profile::{NamedProfile, Profile};
+pub use profile::{NamedProfile, Profile, valid_nice, valid_oom_score_adj};
 pub use policy::{Eevdf, EevdfConfig, Pressure, SchedChoice, SchedExt};
 pub use roles::{Role, RoleSet, Roles};
 use profile::{RawProfile, resolve_profile};
@@ -32,15 +32,28 @@ pub const STATE_DIR: &str = "/var/lib/scdr";
 const MAIN_FILE: &str = "scdr.toml";
 const RULES_DIR: &str = "rules.d";
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum ConfigError {
-    #[error("{}: {source}", path.display())]
-    Io {
-        path: PathBuf,
-        source: std::io::Error,
-    },
-    #[error("{}: {message}", path.display())]
+    Io { path: PathBuf, source: std::io::Error },
     Invalid { path: PathBuf, message: String },
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfigError::Io { path, source } => write!(f, "{}: {source}", path.display()),
+            ConfigError::Invalid { path, message } => write!(f, "{}: {message}", path.display()),
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ConfigError::Io { source, .. } => Some(source),
+            ConfigError::Invalid { .. } => None,
+        }
+    }
 }
 
 impl ConfigError {

@@ -4,6 +4,7 @@
 
 use anyhow::{Context, bail};
 use clap::ValueEnum;
+use scdr::schedulers::on_path;
 use std::process::Command;
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -119,9 +120,4 @@ fn terminal() -> Option<Vec<String>> {
     ];
     let (bin, args) = TERMINALS.into_iter().find(|(bin, _)| on_path(bin))?;
     Some(std::iter::once(bin).chain(args.iter().copied()).map(String::from).collect())
-}
-
-fn on_path(bin: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|p| std::env::split_paths(&p).any(|dir| dir.join(bin).is_file()))
 }

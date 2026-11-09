@@ -146,13 +146,13 @@ impl Rule {
             }
         }
         if m.parent.is_some() || m.not_parent.is_some() {
-            let parent = lineage.chain().first().cloned().unwrap_or_default();
-            if !pos(&m.parent, &|x| x.is_match(&parent)) || !neg(&m.not_parent, &|x| x.is_match(&parent)) {
+            let parent: Vec<&str> = lineage.chain().first().map(|a| a.names().collect()).unwrap_or_default();
+            if !pos(&m.parent, &|x| x.any(&parent)) || !neg(&m.not_parent, &|x| x.any(&parent)) {
                 return false;
             }
         }
         if m.ancestor.is_some() || m.not_ancestor.is_some() {
-            let chain: Vec<&str> = lineage.chain().iter().map(String::as_str).collect();
+            let chain: Vec<&str> = lineage.chain().iter().flat_map(Ancestor::names).collect();
             if !pos(&m.ancestor, &|x| x.any(&chain)) || !neg(&m.not_ancestor, &|x| x.any(&chain)) {
                 return false;
             }
@@ -161,10 +161,26 @@ impl Rule {
     }
 }
 
-/// A process's ancestors' names (parent first), read from /proc on first use.
+/// One ancestor: the kernel's (15 character) comm and, when readable, the
+/// executable's file name, which is not truncated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ancestor {
+    pub comm: String,
+    pub exe: Option<String>,
+}
+
+impl Ancestor {
+    /// Names a `parent`/`ancestor` pattern is tried against.
+    fn names(&self) -> impl Iterator<Item = &str> {
+        let exe = self.exe.as_deref().filter(|e| *e != self.comm);
+        std::iter::once(self.comm.as_str()).chain(exe)
+    }
+}
+
+/// A process's ancestors (parent first), read from /proc on first use.
 pub struct Lineage {
     ppid: u32,
-    chain: Option<Vec<String>>,
+    chain: Option<Vec<Ancestor>>,
 }
 
 impl Lineage {
@@ -172,19 +188,23 @@ impl Lineage {
         Lineage { ppid: p.ppid, chain: None }
     }
 
-    /// Pre-filled, for tests and importers.
+    /// Pre-filled from comm names, for tests and importers.
     pub fn known(chain: Vec<String>) -> Self {
+        Self::known_with_exe(chain.into_iter().map(|comm| Ancestor { comm, exe: None }).collect())
+    }
+
+    pub fn known_with_exe(chain: Vec<Ancestor>) -> Self {
         Lineage { ppid: 0, chain: Some(chain) }
     }
 
-    pub fn chain(&mut self) -> &[String] {
+    pub fn chain(&mut self) -> &[Ancestor] {
         let ppid = self.ppid;
         self.chain.get_or_insert_with(|| {
             let mut out = Vec::new();
             let mut pid = ppid;
             while pid > 1 && out.len() < 32 {
                 let Some(comm) = crate::procfs::comm(pid) else { break };
-                out.push(comm);
+                out.push(Ancestor { comm, exe: crate::procfs::exe_name(pid) });
                 pid = crate::procfs::Stat::read(pid).map(|s| s.ppid).unwrap_or(0);
             }
             out
@@ -192,9 +212,41 @@ impl Lineage {
     }
 }
 
+const COMM_MAX: usize = 15;
+
+/// Characters that make a pattern a glob rather than a literal name.
+fn is_literal(p: &str) -> bool {
+    !p.contains(['*', '?', '[', ']', '{', '}', '\\'])
+}
+
+/// The kernel truncates comm to 15 characters, so a longer literal can only
+/// ever match an executable (or argv[0]) file name.
+fn long_name_warnings(raw: &RawRule) -> Vec<String> {
+    let fields = [
+        ("name", &raw.name),
+        ("not_name", &raw.not_name),
+        ("parent", &raw.parent),
+        ("not_parent", &raw.not_parent),
+        ("ancestor", &raw.ancestor),
+        ("not_ancestor", &raw.not_ancestor),
+    ];
+    let mut out = Vec::new();
+    for (key, pats) in fields {
+        for p in pats.iter().flat_map(|p| p.as_slice()) {
+            if p.chars().count() > COMM_MAX && is_literal(p) {
+                out.push(format!(
+                    "{key} {p:?} is longer than {COMM_MAX} characters, so it can only match an executable file name, never a comm"
+                ));
+            }
+        }
+    }
+    out
+}
+
 #[derive(Debug, Default)]
 pub struct RuleSet {
     rules: Vec<Rule>,
+    warnings: Vec<String>,
 }
 
 impl RuleSet {
@@ -203,6 +255,7 @@ impl RuleSet {
         profiles: &BTreeMap<String, NamedProfile>,
     ) -> Result<Self, ConfigError> {
         let mut rules = Vec::new();
+        let mut warnings = Vec::new();
         for (path, raws) in chunks {
             for (i, raw) in raws.iter().enumerate() {
                 if !profiles.contains_key(&raw.profile) {
@@ -213,10 +266,13 @@ impl RuleSet {
                 }
                 let rule = Rule::compile(path.clone(), i + 1, raw)
                     .map_err(|e| ConfigError::invalid(&path, format!("rule #{}: {e}", i + 1)))?;
+                for w in long_name_warnings(raw) {
+                    warnings.push(format!("{}: rule #{}: {w}", path.display(), i + 1));
+                }
                 rules.push(rule);
             }
         }
-        Ok(RuleSet { rules })
+        Ok(RuleSet { rules, warnings })
     }
 
     pub fn find(&self, p: &ProcInfo) -> Option<&Rule> {
@@ -237,6 +293,11 @@ impl RuleSet {
 
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty()
+    }
+
+    /// Things that load fine but probably don't do what the author meant.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
     }
 }
 

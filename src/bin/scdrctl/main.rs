@@ -92,6 +92,9 @@ enum Command {
         /// Write here instead of stdout (e.g. /etc/scdr/rules.d/50-ananicy.toml).
         #[arg(short, long, global = true)]
         output: Option<PathBuf>,
+        /// Overwrite the --output file if it already exists.
+        #[arg(long, global = true, requires = "output")]
+        force: bool,
         #[command(flatten)]
         paths: PathArgs,
     },
@@ -226,8 +229,11 @@ async fn main() -> anyhow::Result<()> {
             for f in &c.files {
                 println!("  {}", f.display());
             }
+            for w in c.rules.warnings() {
+                println!("warning: {w}");
+            }
         }
-        Command::Import { from, output, paths } => import::import(from, output, &paths)?,
+        Command::Import { from, output, force, paths } => import::import(from, output, force, &paths)?,
         Command::Schedulers { action, dry_run } => install::run(action, dry_run)?,
         Command::Bench { duration, interval_us, load, repeat, json } => {
             let cpus = std::thread::available_parallelism().map_or(4, |n| n.get());

@@ -32,12 +32,17 @@ impl Import {
         Import { source: source.into(), ..Default::default() }
     }
 
-    pub fn profile(&mut self, name: &str, fields: Vec<(String, Value)>) {
-        self.profiles.insert(name.to_owned(), fields);
-    }
-
-    pub fn has_profile(&self, name: &str) -> bool {
-        self.profiles.contains_key(name)
+    /// Adds a profile and returns the name it got: `name`, or `name-2`,
+    /// `name-3`, … when that is already taken, so profiles never replace each other.
+    pub fn profile(&mut self, name: &str, fields: Vec<(String, Value)>) -> String {
+        let mut unique = name.to_owned();
+        let mut n = 2;
+        while self.profiles.contains_key(&unique) {
+            unique = format!("{name}-{n}");
+            n += 1;
+        }
+        self.profiles.insert(unique.clone(), fields);
+        unique
     }
 
     /// One rule; each condition is a key and its patterns.
@@ -160,8 +165,10 @@ mod tests {
     fn escapes_glob_metacharacters() {
         assert_eq!(glob_literal("a*b?[c]{d}"), "a[*]b[?][[]c[]][{]d[}]");
         let mut imp = Import::new("test");
-        imp.profile("p", vec![("nice".into(), "1".into())]);
-        imp.rule("p", vec![("name".into(), vec![glob_literal("weird[1].exe")])]);
+        let p = imp.profile("p", vec![("nice".into(), "1".into())]);
+        assert_eq!(imp.profile("p", vec![]), "p-2");
+        assert_eq!(imp.profile("p", vec![]), "p-3");
+        imp.rule(&p, vec![("name".into(), vec![glob_literal("weird[1].exe")])]);
         let c = imp.validate(&[]).unwrap();
         assert!(c.rules.find(&synthetic("weird[1].exe")).is_some());
         assert!(c.rules.find(&synthetic("weird1.exe")).is_none());
