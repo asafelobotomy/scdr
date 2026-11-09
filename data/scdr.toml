@@ -31,8 +31,12 @@ name = [
 # its descendants are left alone. (gamemoderun isn't here: games GameMode
 # registers get the "game" role instead.)
 launchers = [
-    "chrt", "nice", "ionice", "taskset", "schedtool", "systemd-run",
+    "chrt", "nice", "ionice", "taskset", "schedtool",
 ]
+# systemd-run is not a launcher here: desktops start every app with
+# `systemd-run --user --scope` (uQ, uwsm, app2unit), which only places it in a
+# unit. If it does change priorities (--nice=), scdr sees values it didn't set
+# and leaves them alone.
 
 # ---------------------------------------------------------------------------
 # Roles: profiles for what a process is doing right now, reported by the
@@ -205,7 +209,7 @@ exe = [
 profile = "compositor"
 exe = [
     "/usr/*/kwin_wayland", "/usr/*/kwin_x11", "/usr/*/gnome-shell", "/usr/*/Xwayland",
-    "/usr/*/Xorg", "/usr/*/Hyprland", "/usr/*/sway", "/usr/*/niri", "/usr/*/labwc",
+    "/usr/*/Xorg", "/usr/*/Hyprland", "/usr/*/hyprland", "/usr/*/sway", "/usr/*/niri", "/usr/*/labwc",
     "/usr/*/wayfire", "/usr/*/cosmic-comp",
 ]
 
@@ -214,6 +218,8 @@ profile = "desktop"
 exe = [
     "/usr/*/plasmashell", "/usr/*/krunner", "/usr/*/kded6", "/usr/*/xdg-desktop-portal*",
     "/usr/*/gnome-session-binary", "/usr/*/cosmic-panel", "/usr/*/waybar",
+    # uQ: its Quickshell shell and lock screen, and the uqd session daemon.
+    "/usr/*/quickshell", "/usr/*/qs", "/usr/*/uqd", "/usr/*/hyprlock",
 ]
 
 [[rule]]
