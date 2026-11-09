@@ -57,7 +57,9 @@ impl Service {
                 }
                 Ok(original) => {
                     let target = original.with_profile(&profile.profile);
-                    let last = apply::apply(pid, &target, &[original], dry_run);
+                    // An inherited boost is scdr's value too, not someone else's.
+                    let owned: Vec<Snapshot> = std::iter::once(original).chain(inherit.map(|i| i.target)).collect();
+                    let last = apply::apply(pid, &target, &owned, dry_run);
                     log_apply(info, &profile.name, &last, dry_run, true, trigger);
                     State::Managed(Box::new(Managed {
                         rule,

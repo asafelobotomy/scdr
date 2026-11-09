@@ -89,15 +89,21 @@ pub struct Entry {
     /// inherited by children and kept across exec.
     pub sticky: Option<String>,
     pub state: State,
+    /// The boost a managed ancestor carried when this process was forked.
+    /// Recorded then, because by its first evaluation the parent may have
+    /// exited and the process been reparented (double-forking launchers
+    /// such as Hyprland's exec), which hides where its values came from.
+    inherited: Option<inherit::Inherited>,
 }
 
 impl Entry {
-    fn new(ppid: u32, sticky: Option<String>) -> Self {
+    fn new(ppid: u32, sticky: Option<String>, inherited: Option<inherit::Inherited>) -> Self {
         Entry {
             start_time: 0,
             ppid,
             sticky,
             state: State::Pending,
+            inherited,
         }
     }
 }
@@ -178,7 +184,8 @@ impl Service {
                         .procs
                         .get(&parent_tgid)
                         .and_then(|p| p.sticky.clone());
-                    self.procs.insert(child_pid, Entry::new(parent_tgid, sticky));
+                    let inherited = self.inherited_from(parent_tgid);
+                    self.procs.insert(child_pid, Entry::new(parent_tgid, sticky, inherited));
                 } else {
                     self.new_thread(child_tgid, child_pid);
                 }
@@ -276,7 +283,8 @@ impl Service {
         let reused = known.is_some_and(|e| e.start_time != 0 && e.start_time != info.start_time);
         if known.is_none() || reused {
             let sticky = self.inherited_sticky(info.ppid);
-            self.procs.insert(pid, Entry::new(info.ppid, sticky));
+            let inherited = self.inherited_from(info.ppid);
+            self.procs.insert(pid, Entry::new(info.ppid, sticky, inherited));
         }
 
         if info.kthread {
@@ -298,7 +306,8 @@ impl Service {
             }
         }
         if trigger == Trigger::Exec && first_look && self.procs[&pid].sticky.is_none() {
-            if let Some(why) = hand_tuned(pid, info.ppid) {
+            let inherited = self.procs[&pid].inherited.or_else(|| self.inherited_from(info.ppid));
+            if let Some(why) = hand_tuned(pid, info.ppid, inherited.as_ref()) {
                 self.procs.get_mut(&pid).unwrap().sticky = Some(why);
             }
         }
@@ -332,10 +341,19 @@ impl Service {
             (rule, p)
         });
 
-        // On a first look, values shared with a boosted ancestor are inherited.
+        // The first time a process is up for a profile (not excepted, not
+        // already managed), values it shares with the boost it was forked
+        // with are inherited, not its own. That may be after an exec, not
+        // at first sight: `systemd-run` is excepted (as systemd-*) until it
+        // execs the app it launches. The record is used once.
         let inherit = match self.procs[&pid].state {
-            State::Pending if excepted.is_none() => self.inherited_from(info.ppid),
-            _ => None,
+            State::Managed(_) => None,
+            _ if excepted.is_some() => None,
+            State::Pending => {
+                let rec = self.procs.get_mut(&pid).unwrap().inherited.take();
+                rec.or_else(|| self.inherited_from(info.ppid))
+            }
+            _ => self.procs.get_mut(&pid).unwrap().inherited.take(),
         };
         let unit_profile = matched.as_ref().map(|(_, p)| p.clone());
         self.transition(pid, &info, trigger, matched, excepted, inherit);
