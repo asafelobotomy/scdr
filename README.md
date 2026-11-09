@@ -50,7 +50,9 @@ benchmark. Packaged for the AUR (`packaging/aur`).
   scdr-foreground@scdr`); the Hyprland, niri and GNOME paths are tested
   against their documented event formats but not yet on those desktops; scdrd only accepts pids owned by the calling user. Roles can
   differ per power-profiles-daemon profile, e.g. no foreground boost on
-  power-saver.
+  power-saver. While the screen is locked (logind's `LockedHint`, which
+  uQ, Plasma and GNOME set) no app counts as focused, so the last window
+  isn't boosted behind the lock screen.
 - Under CPU pressure (PSI above `[pressure] high`), apps that aren't focused
   get the `background` role (`CPUWeight=50`) until pressure drops below
   `low`, switching at most once every `hold_secs` (30 s). Without a session
@@ -157,6 +159,11 @@ cmdline = ["* -b *"]   # background renders only
 ```
 
 ## Importing ananicy-cpp and system76-scheduler rules
+
+scdrd won't run beside ananicy-cpp or system76-scheduler: the two would undo
+each other's priorities. `scdrd.service` conflicts with their units, and
+scdrd exits (code 3, no restart) if one is running anyway. Import their rules
+first, then disable them.
 
 ```sh
 # The CachyOS/ananicy game list (~13.5k names) as one rule:

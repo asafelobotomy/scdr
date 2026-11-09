@@ -130,6 +130,12 @@ fn changes_owned_threads_and_leaves_foreign_ones() {
 
 #[test]
 fn uclamp_is_set_and_cleared() {
+    // Kernels built without CONFIG_UCLAMP_TASK refuse util clamps; that
+    // sysctl exists only with it.
+    if !std::path::Path::new("/proc/sys/kernel/sched_util_clamp_max").exists() {
+        eprintln!("skipped: this kernel has no uclamp (CONFIG_UCLAMP_TASK)");
+        return;
+    }
     with_helper_threads(|plain, _| {
         let original = Snapshot::original(plain).unwrap();
         if original.task.cpu.policy != sched::SCHED_OTHER {

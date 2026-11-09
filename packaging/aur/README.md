@@ -15,8 +15,11 @@ the local `packaging/arch/PKGBUILD`.
 ## Publishing
 
 1. Push this repository to `https://github.com/asafelobotomy/scdr`.
-2. For a release, tag it (`git tag v$pkgver && git push --tags`), then in
-   `scdr/` run `updpkgsums` to replace the `SKIP` checksum.
+2. For a release, set `version` in `Cargo.toml` and `pkgver` in
+   `scdr/PKGBUILD`, then tag it (`git tag v$pkgver && git push origin v$pkgver`).
+   The release workflow uploads `scdr-$pkgver.tar.gz` and keeps the AUR files
+   with its real checksum as the `aur` artifact; use those instead of
+   `updpkgsums`.
 3. Test in a clean chroot: `extra-x86_64-build` (devtools), or at least
    `makepkg -f && namcap PKGBUILD *.pkg.tar.zst`.
 4. Regenerate metadata: `makepkg --printsrcinfo > .SRCINFO`.

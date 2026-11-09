@@ -18,9 +18,14 @@ Process scheduling and priority daemon (`scdrd`) and control tool (`scdrctl`) fo
 ## Conventions
 - No source file over 400 lines, tests included; `tests/file_length.rs` enforces it. Split into a module directory (`foo/mod.rs` + `foo/bar.rs`).
 - Run `cargo clippy --all-targets` and `cargo test` before committing.
-- Rust edition 2024, MSRV 1.85, MPL-2.0. Work on `main`. CI (`ci.yml`) runs clippy and tests only; there is no release workflow.
+- Rust edition 2024, MSRV 1.85, MPL-2.0. Work on `main`. CI (`ci.yml`) runs clippy and tests. Pushing a `vX.Y.Z` tag runs `release.yml`: it uploads a source archive, builds the AUR package from it and keeps the AUR files (real checksum, `.SRCINFO`) as the `aur` artifact. Tagging, releasing and pushing to the AUR are the user's steps, never an agent's.
 - Do not edit or commit build output in `packaging/arch` (`pkg/`, `src/`, `*.pkg.tar.zst` are git-ignored).
 
 ## Gotchas
 - The daemon acts on live processes and systemd units; prefer `--dry-run` while developing.
 - Hyprland, niri and GNOME focus paths are tested against documented event formats only, not on those desktops (per README).
+- scdrd exits 3 (no restart) while ananicy-cpp or system76-scheduler runs (`src/rivals.rs`); `--dry-run` skips the check.
+- The session agent follows logind's `LockedHint` (`src/agent/lock.rs`) and sends `SetForeground(0)` while locked, so nothing stays boosted behind the lock screen.
+
+## uQ integration
+- uQ's units run in `session.slice`, and its `base.lua` restarts `scdr-session` with the session's environment. bindle's `scdr` module imports ananicy rules before removing ananicy, then enables `scdrd`; `scdr-sched-ext` turns on `[sched_ext]` through `/etc/scdr/rules.d/40-bindle-sched-ext.toml`.

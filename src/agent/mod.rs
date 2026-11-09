@@ -6,7 +6,9 @@
 //! - the focused window's pid: from a KWin script it loads, Hyprland's or
 //!   niri's IPC, or the scdr GNOME Shell extension,
 //! - processes registered with GameMode,
-//! - processes with a running PipeWire audio stream.
+//! - processes with a running PipeWire audio stream,
+//! - whether the screen is locked (logind's `LockedHint`): while it is, no
+//!   app counts as focused.
 //!
 //! It re-sends everything whenever scdrd (re)appears on the system bus.
 
@@ -14,6 +16,7 @@ mod gamemode;
 mod hyprland;
 mod ipc;
 mod kwin;
+mod lock;
 mod niri;
 mod pipewire;
 mod push;
@@ -34,6 +37,8 @@ pub struct State {
     pub foreground: Option<u32>,
     pub audio: BTreeSet<u32>,
     pub games: BTreeSet<u32>,
+    /// The screen is locked: scdrd is told no app is focused.
+    pub locked: bool,
 }
 
 /// State shared between the watchers and the task that pushes to scdrd.
@@ -56,6 +61,14 @@ impl Shared {
         let mut s = self.state.lock().unwrap();
         let changed = s.foreground != Some(pid);
         s.foreground = Some(pid);
+        drop(s);
+        self.notify_if(changed);
+    }
+
+    pub fn set_locked(&self, locked: bool) {
+        let mut s = self.state.lock().unwrap();
+        let changed = s.locked != locked;
+        s.locked = locked;
         drop(s);
         self.notify_if(changed);
     }
@@ -125,6 +138,14 @@ pub async fn run() -> anyhow::Result<()> {
         }
     });
     pipewire::spawn(shared.clone());
+    tokio::spawn({
+        let (system, shared) = (system.clone(), shared.clone());
+        async move {
+            if let Err(e) = lock::watch(system, shared).await {
+                tracing::warn!("not following the screen lock: {e:#}");
+            }
+        }
+    });
 
     let daemon = Daemon1Proxy::new(&system).await?;
     let mut daemon_restarts = zbus::fdo::DBusProxy::new(&system)

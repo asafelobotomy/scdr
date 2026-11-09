@@ -9,6 +9,7 @@ pub mod explain;
 pub mod import;
 pub mod policy;
 pub mod procfs;
+pub mod rivals;
 pub mod rules;
 pub mod schedulers;
 pub mod sched;

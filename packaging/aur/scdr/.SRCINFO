@@ -18,7 +18,7 @@ pkgbase = scdr
 	optdepends = pipewire: audio-client role (pw-dump)
 	optdepends = gamemode: game role
 	optdepends = power-profiles-daemon: per-power-profile roles
-	source = scdr-0.2.0.tar.gz::https://github.com/asafelobotomy/scdr/archive/refs/tags/v0.2.0.tar.gz
+	source = scdr-0.2.0.tar.gz::https://github.com/asafelobotomy/scdr/releases/download/v0.2.0/scdr-0.2.0.tar.gz
 	sha256sums = SKIP
 
 pkgname = scdr

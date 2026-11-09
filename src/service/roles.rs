@@ -36,12 +36,17 @@ pub(super) type Sessions = HashMap<String, Session>;
 
 impl Service {
     /// The focused window of `uid`'s session is `pid`. Only app units
-    /// (`app.slice`) are boosted, not the desktop's own services.
+    /// (`app.slice`) are boosted, not the desktop's own services. `pid` 0:
+    /// no app is focused (the screen is locked).
     pub fn set_foreground(&mut self, uid: u32, sender: &str, pid: u32) -> Result<(), String> {
-        let info = owned_process(uid, pid)?;
-        let in_app_slice = info.cgroup.contains(&format!("/user@{uid}.service/app.slice/"));
-        let new = (in_app_slice && UnitId::from_cgroup(&info.cgroup).is_some())
-            .then(|| (info.cgroup.clone(), pid));
+        let new = if pid == 0 {
+            None
+        } else {
+            let info = owned_process(uid, pid)?;
+            let in_app_slice = info.cgroup.contains(&format!("/user@{uid}.service/app.slice/"));
+            (in_app_slice && UnitId::from_cgroup(&info.cgroup).is_some())
+                .then(|| (info.cgroup.clone(), pid))
+        };
 
         // Without a focused app the background role can't be placed; if
         // pressure came first (e.g. right after a restart), re-check every app.

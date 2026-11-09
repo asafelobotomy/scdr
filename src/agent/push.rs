@@ -26,10 +26,12 @@ impl Plan {
     }
 }
 
-/// Fields of `now` that differ from what `sent` records.
+/// Fields of `now` that differ from what `sent` records. While the screen is
+/// locked the foreground is 0: no app is in front, so none is boosted.
 pub fn plan(now: &State, sent: &Sent) -> Plan {
+    let foreground = if now.locked { Some(0) } else { now.foreground };
     Plan {
-        foreground: now.foreground.filter(|_| sent.foreground != now.foreground),
+        foreground: foreground.filter(|_| sent.foreground != foreground),
         audio: (sent.audio.as_ref() != Some(&now.audio)).then(|| now.audio.iter().copied().collect()),
         games: (sent.games.as_ref() != Some(&now.games)).then(|| now.games.iter().copied().collect()),
     }
@@ -56,7 +58,23 @@ mod tests {
             foreground: fg,
             audio: audio.iter().copied().collect(),
             games: games.iter().copied().collect(),
+            locked: false,
         }
+    }
+
+    #[test]
+    fn locking_clears_the_foreground_and_unlocking_restores_it() {
+        let mut now = state(Some(5), &[], &[]);
+        let mut sent = Sent::default();
+        sent.mark_foreground(5);
+        sent.mark_audio(&[]);
+        sent.mark_games(&[]);
+        now.locked = true;
+        assert_eq!(plan(&now, &sent).foreground, Some(0));
+        sent.mark_foreground(0);
+        assert!(plan(&now, &sent).is_empty());
+        now.locked = false;
+        assert_eq!(plan(&now, &sent).foreground, Some(5));
     }
 
     #[test]
