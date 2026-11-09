@@ -120,9 +120,9 @@ async fn main() -> anyhow::Result<()> {
             paths: paths.clone(),
             trial: Default::default(),
         };
-        let conn = zbus::connection::Builder::system()?
-            .name(BUS_NAME)?
-            .serve_at(OBJECT_PATH, iface)?
+        let conn = zbus::connection::Builder::system()
+            .name(BUS_NAME)
+            .serve_at(OBJECT_PATH, iface)
             .build()
             .await
             .context("claiming org.scdr.Daemon1 on the system bus (is scdrd already running?)")?;

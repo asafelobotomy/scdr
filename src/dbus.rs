@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use zbus::message::Header;
 use zbus::names::BusName;
-use zbus::zvariant::Value;
+use zbus::Variant;
 
 pub const POLKIT_ACTION: &str = "org.scdr.control";
 
@@ -253,7 +253,7 @@ async fn authorize(header: &Header<'_>, conn: &zbus::Connection) -> zbus::fdo::R
         "org.freedesktop.PolicyKit1.Authority",
     )
     .await?;
-    let subject = ("system-bus-name", HashMap::from([("name", Value::from(sender))]));
+    let subject = ("system-bus-name", HashMap::from([("name", Variant::from(sender))]));
     let details: HashMap<&str, &str> = HashMap::new();
     const ALLOW_USER_INTERACTION: u32 = 1;
     let reply = polkit
