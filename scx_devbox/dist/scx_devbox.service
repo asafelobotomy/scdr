@@ -1,6 +1,6 @@
 [Unit]
 Description=scx_devbox sched_ext scheduler (low-end dev boxes with LLM agents)
-Documentation=file:///usr/local/share/doc/scx_devbox/README.md
+Documentation=file://@DOCDIR@/README.md
 # Only one sched_ext scheduler can run; don't fight scx_loader-started ones.
 Conflicts=scx.service
 After=scdrd.service

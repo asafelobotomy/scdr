@@ -71,12 +71,18 @@ sudo ./build/scx_devbox -i 2          # stats every 2 s; Ctrl-C to stop
 cc -O2 tools/latbench.c -o build/latbench && ./build/latbench 8
 ```
 
-Install as a service:
+Install as a service, either from scdr's Arch packaging (a split package:
+`cd packaging/arch && makepkg -si` installs `scdr` and `scx-devbox`) or by
+hand into `/usr/local`:
 
 ```sh
 sudo make install
 sudo systemctl enable --now scx_devbox
 ```
+
+The build takes `vmlinux.h` from the running kernel's BTF, so it needs a
+kernel with sched_ext; the result is CO-RE and loads on other sched_ext
+kernels.
 
 Stop any scx_loader-started scheduler first (`scxctl stop`): only one sched_ext
 scheduler can run. If the kernel ejects scx_devbox (a stall or an error), the

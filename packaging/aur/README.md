@@ -3,6 +3,12 @@
 - `scdr-git/` builds the latest `main` from GitHub.
 - `scdr/` builds a tagged release (`v$pkgver` on GitHub).
 
+`scdr-git` is a split package that also builds `scx-devbox-git`, the
+sched_ext scheduler in `scx_devbox/` (needs a sched_ext kernel to build).
+`scdr/` stays daemon-only until a release tag contains `scx_devbox/`; then
+split it the same way as `packaging/arch/PKGBUILD`. Copy `scx-devbox.install`
+along with `scdr.install` when publishing.
+
 Both install through `packaging/install.sh` from the source tree, the same as
 the local `packaging/arch/PKGBUILD`.
 
@@ -18,7 +24,7 @@ the local `packaging/arch/PKGBUILD`.
 
    ```sh
    git clone ssh://aur@aur.archlinux.org/scdr-git.git ~/aur/scdr-git
-   cp packaging/aur/scdr-git/{PKGBUILD,.SRCINFO,scdr.install} ~/aur/scdr-git/
+   cp packaging/aur/scdr-git/{PKGBUILD,.SRCINFO,scdr.install,scx-devbox.install} ~/aur/scdr-git/
    cd ~/aur/scdr-git && git add -A && git commit -m "Initial upload" && git push
    ```
 

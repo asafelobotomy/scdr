@@ -2,22 +2,20 @@
 #
 # Builds from this source tree: `cd packaging/arch && makepkg -si`.
 # For the AUR, replace _root with a source=() git URL and add checksums.
+#
+# Split package: scdr (the daemon, MPL-2.0) and scx-devbox (a sched_ext
+# scheduler, GPL-2.0 as the kernel requires). Building scx-devbox needs a
+# running kernel with sched_ext: its vmlinux.h comes from /sys/kernel/btf.
 
-pkgname=scdr
+pkgbase=scdr
+pkgname=('scdr' 'scx-devbox')
 pkgver=0.2.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Process scheduling and priority daemon for EEVDF and sched_ext kernels"
 arch=('x86_64' 'aarch64')
 url="https://github.com/asafelobotomy/scdr"
 license=('MPL-2.0')
-install=scdr.install
-depends=('libgcc' 'glibc' 'dbus' 'systemd')
-makedepends=('cargo')
-optdepends=('scx-scheds: sched_ext schedulers ([sched_ext])'
-            'scx-tools: scx_loader, which scdr drives ([sched_ext])'
-            'pipewire: audio-client role (pw-dump)'
-            'gamemode: game role'
-            'power-profiles-daemon: per-power-profile roles')
+makedepends=('cargo' 'clang' 'bpf' 'libbpf' 'libelf' 'zlib')
 
 _root="$(realpath "$startdir/../..")"
 
@@ -32,6 +30,7 @@ build() {
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR="$srcdir/target"
   cargo build --frozen --release
+  make -C scx_devbox BUILD="$srcdir/scx_devbox" "$srcdir/scx_devbox/scx_devbox"
 }
 
 check() {
@@ -41,7 +40,28 @@ check() {
   cargo test --frozen --release
 }
 
-package() {
+package_scdr() {
+  install=scdr.install
+  depends=('libgcc' 'glibc' 'dbus' 'systemd')
+  optdepends=('scx-scheds: sched_ext schedulers ([sched_ext])'
+              'scx-tools: scx_loader, which scdr drives ([sched_ext])'
+              'scx-devbox: sched_ext scheduler that follows scdr profiles'
+              'pipewire: audio-client role (pw-dump)'
+              'gamemode: game role'
+              'power-profiles-daemon: per-power-profile roles')
+
   cd "$_root"
   ./packaging/install.sh "$pkgdir" "$srcdir/target/release"
+}
+
+package_scx-devbox() {
+  pkgdesc="sched_ext scheduler for low-end machines doing development with LLM agent apps"
+  license=('GPL-2.0-only')
+  install=scx-devbox.install
+  depends=('glibc' 'libbpf')
+  optdepends=('scdr: per-process hints (batch builds, latency slices, nice)')
+
+  cd "$_root"
+  make -C scx_devbox BUILD="$srcdir/scx_devbox" DESTDIR="$pkgdir" \
+    PREFIX=/usr UNITDIR=/usr/lib/systemd/system install
 }

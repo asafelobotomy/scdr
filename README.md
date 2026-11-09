@@ -65,8 +65,8 @@ benchmark. Packaged for the AUR (`packaging/aur`).
   low-end machines doing development with LLM agent apps. It reads scdr's
   profiles from each task (`sched = "batch"`, `slice_us`, `nice`), so builds
   and indexers wait while the desktop and short agent tool calls go first.
-  Built and installed separately (`make && make install`); not yet in the
-  Arch package.
+  Packaged separately as `scx-devbox` by the same PKGBUILD; not started
+  unless you enable it (`systemctl enable --now scx_devbox`).
 - Restores everything on `systemctl stop scdrd`: threads, unit weights,
   autogroup and iocost. systemd keeps an empty runtime drop-in
   (`CPUWeight=`) for each unit it touched under `/run`; it has no effect and is
