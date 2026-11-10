@@ -26,6 +26,9 @@ iocost = false
 name = [
     "systemd", "systemd-*", "dbus-daemon", "dbus-broker*", "rtkit-daemon",
     "scdrd", "gamemoded", "scx_*",
+    # Userspace OOM killers must keep up when memory runs out, not be
+    # demoted with other system services (systemd-oomd is covered above).
+    "earlyoom", "nohang",
 ]
 # Tools that set priorities on purpose. The tool, whatever it execs, and all
 # its descendants are left alone. (gamemoderun isn't here: games GameMode

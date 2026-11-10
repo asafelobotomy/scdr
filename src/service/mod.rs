@@ -318,6 +318,8 @@ impl Service {
 
         let excepted = if pid == 1 || pid == self.self_pid {
             Some("system process".to_owned())
+        } else if info.ppid == self.self_pid {
+            Some("scdrd's own helper (systemctl)".to_owned())
         } else if let Some(s) = &self.procs[&pid].sticky {
             Some(s.clone())
         } else {

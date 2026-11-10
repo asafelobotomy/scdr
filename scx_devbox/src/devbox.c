@@ -105,31 +105,54 @@ static void read_stats(struct scx_devbox *skel, int ncpu,
 	}
 }
 
+/* Reads /sys/kernel/sched_ext/<name> into buf; false if unreadable. */
+static bool read_scx(const char *name, char *buf, size_t len)
+{
+	char path[64];
+	FILE *f;
+	bool ok;
+
+	snprintf(path, sizeof(path), "/sys/kernel/sched_ext/%s", name);
+	f = fopen(path, "r");
+	if (!f)
+		return false;
+	ok = fgets(buf, len, f) != NULL;
+	fclose(f);
+	if (ok)
+		buf[strcspn(buf, "\n")] = 0;
+	return ok;
+}
+
+/*
+ * Another scheduler may hold sched_ext for a moment: scx_loader starts its
+ * default at boot and scdr stops it a few seconds later, and scdr puts it
+ * back while it restarts. Wait for it to go rather than fail straight away.
+ */
+#define BUSY_WAIT_SECS 30
+
 static void check_sched_ext_state(void)
 {
-	char buf[32] = "";
-	FILE *f = fopen("/sys/kernel/sched_ext/state", "r");
+	char state[32] = "", ops[64] = "?";
 
-	if (!f) {
+	if (!read_scx("state", state, sizeof(state))) {
 		fprintf(stderr, "this kernel has no sched_ext "
 			"(/sys/kernel/sched_ext missing)\n");
 		exit(1);
 	}
-	if (fgets(buf, sizeof(buf), f) && strncmp(buf, "disabled", 8)) {
-		char ops[64] = "?";
-		FILE *o = fopen("/sys/kernel/sched_ext/root/ops", "r");
-
-		if (o) {
-			if (fgets(ops, sizeof(ops), o))
-				ops[strcspn(ops, "\n")] = 0;
-			fclose(o);
+	for (int i = 0; strcmp(state, "disabled"); i++) {
+		if (i == 0) {
+			read_scx("root/ops", ops, sizeof(ops));
+			fprintf(stderr, "another sched_ext scheduler is running (%s); "
+				"waiting up to %ds for it to stop\n", ops, BUSY_WAIT_SECS);
 		}
-		fprintf(stderr, "another sched_ext scheduler is running (%s); "
-			"stop it first (scxctl stop)\n", ops);
-		fclose(f);
-		exit(1);
+		if (i >= BUSY_WAIT_SECS || stop) {
+			fprintf(stderr, "%s is still running; stop it first (scxctl stop)\n", ops);
+			exit(1);
+		}
+		sleep(1);
+		if (!read_scx("state", state, sizeof(state)))
+			exit(1);
 	}
-	fclose(f);
 }
 
 enum run_result { RUN_STOPPED, RUN_FAILED, RUN_RESTART };
@@ -295,6 +318,8 @@ int main(int argc, char **argv)
 		return 2;
 	}
 
+	signal(SIGINT, on_signal);
+	signal(SIGTERM, on_signal);
 	check_sched_ext_state();
 
 	ncpu = libbpf_num_possible_cpus();
@@ -303,8 +328,6 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	signal(SIGINT, on_signal);
-	signal(SIGTERM, on_signal);
 
 	/* The kernel asks for a restart e.g. when CPUs change mid-load. */
 	for (;;) {
