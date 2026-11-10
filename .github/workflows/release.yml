@@ -31,7 +31,7 @@ jobs:
     steps:
       - name: Install build tools
         # git before checkout, so actions/checkout makes a real repository for git archive.
-        run: pacman -Syu --noconfirm --needed base-devel git rust
+        run: pacman -Syu --noconfirm --needed base-devel git rust clang bpf libbpf libelf zlib
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
@@ -71,6 +71,9 @@ jobs:
 
       # makepkg refuses to run as root. The AUR PKGBUILD builds from the
       # archive above (placed next to it, so makepkg doesn't download it).
+      # scx-devbox compiles against the running kernel's BTF; on a runner
+      # kernel without sched_ext the test build is skipped (the AUR files
+      # are still made), since users build it on their own sched_ext kernel.
       - name: Build the AUR package from the archive
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -79,14 +82,17 @@ jobs:
           mkdir -p aur/scdr
           sed "s|^sha256sums=('SKIP')$|sha256sums=('$sum')|" packaging/aur/scdr/PKGBUILD >aur/scdr/PKGBUILD
           grep -q "^sha256sums=('$sum')$" aur/scdr/PKGBUILD
-          cp packaging/aur/scdr/scdr.install aur/scdr/
+          cp packaging/aur/scdr/scdr.install packaging/aur/scdr/scx-devbox.install aur/scdr/
           useradd -m builder
           mkdir -p build && cp aur/scdr/* "dist/scdr-$VERSION.tar.gz" build/
           chown -R builder:builder aur build
-          su builder -c "set -e
-            cd '$GITHUB_WORKSPACE/aur/scdr' && makepkg --printsrcinfo >.SRCINFO
-            cd '$GITHUB_WORKSPACE/build' && makepkg --nodeps --nocheck --noconfirm"
-          ls -l build/*.pkg.tar.zst
+          su builder -c "cd '$GITHUB_WORKSPACE/aur/scdr' && makepkg --printsrcinfo >.SRCINFO"
+          if bpftool btf dump file /sys/kernel/btf/vmlinux format c 2>/dev/null | grep -q 'struct sched_ext_ops {'; then
+            su builder -c "cd '$GITHUB_WORKSPACE/build' && makepkg --nodeps --nocheck --noconfirm"
+            ls -l build/*.pkg.tar.zst
+          else
+            echo "::warning::The runner's kernel ($(uname -r)) has no sched_ext BTF: skipped the test build of the AUR packages."
+          fi
 
       - name: Write the release notes
         env:
