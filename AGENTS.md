@@ -29,5 +29,7 @@ Process scheduling and priority daemon (`scdrd`) and control tool (`scdrctl`) fo
 
 - With scx_devbox running and announcing `/run/scx_devbox/api`, scdrd writes focus hints to `/run/scdr/devbox-hints` and its foreground/background roles step aside (`src/service/devbox.rs`, `scx_devbox/src/hints.h`, `devbox.focus.h`).
 
+- `[split]` (`src/config/split.rs`, `src/service/split.rs`): for listed apps, processes running a different binary from the app move into `app-<app>-tools-<pid>.scope` via busctl `StartTransientUnit` (run as the user), at scan or the 1.5 s exec re-check. Test it against a dummy app scope with a dev `scdrd --no-dbus --share-dir <dir with only [split]>`, not on Claude itself.
+
 ## uQ integration
 - uQ's units run in `session.slice`, and its `base.lua` restarts `scdr-session` with the session's environment. bindle's `scdr` module imports ananicy rules before removing ananicy, then enables `scdrd`; `scdr-sched-ext` turns on `[sched_ext]` through `/etc/scdr/rules.d/40-bindle-sched-ext.toml`.

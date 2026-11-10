@@ -223,3 +223,18 @@ fn system_intervals_are_bounded() {
     assert!(load("[system]\nrescan_secs = 18446744073709551615\n").is_err());
     assert!(load("[system]\nexec_recheck_ms = 60001\n").is_err());
 }
+
+#[test]
+fn split_lists_replace_lower_files() {
+    let cfg = |files: &[&str]| {
+        Config::from_sources(files.iter().enumerate().map(|(i, t)| (format!("{i}.toml").into(), (*t).into())).collect())
+            .unwrap()
+    };
+    let base = "[split]\napps = [\"com.anthropic.Claude\"]\nkeep = [\"chrome_crashpad*\"]\n";
+    let c = cfg(&[base]);
+    assert!(c.split.enabled && c.split.app("com.anthropic.Claude") && !c.split.app("org.kde.konsole"));
+    // A later file turns it off.
+    assert!(!cfg(&[base, "[split]\napps = []\n"]).split.enabled);
+    // Nothing set: off.
+    assert!(!cfg(&[""]).split.enabled);
+}

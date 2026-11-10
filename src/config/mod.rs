@@ -16,11 +16,13 @@ pub mod layer;
 pub(crate) mod policy;
 mod profile;
 mod roles;
+mod split;
 
 use crate::rules::{Exceptions, RuleSet};
 pub use profile::{NamedProfile, Profile, valid_nice, valid_oom_score_adj};
 pub use policy::{Eevdf, EevdfConfig, Pressure, SchedChoice, SchedExt};
 pub use roles::{Role, RoleSet, Roles};
+pub use split::Split;
 use profile::{RawProfile, resolve_profile};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -98,6 +100,7 @@ pub struct Config {
     pub rules: RuleSet,
     pub exceptions: Exceptions,
     pub roles: Roles,
+    pub split: Split,
     pub sched_ext: SchedExt,
     pub eevdf: EevdfConfig,
     pub pressure: Pressure,
@@ -174,6 +177,7 @@ struct RawFile {
     sched_ext: Option<policy::RawSchedExt>,
     eevdf: Option<policy::RawEevdf>,
     pressure: Option<policy::RawPressure>,
+    split: Option<split::RawSplit>,
 }
 
 /// Upper bounds for `[system]` intervals: a day, and a minute.
@@ -258,6 +262,7 @@ impl Config {
         let mut sched_ext = SchedExt::default();
         let mut eevdf = EevdfConfig::default();
         let mut pressure = Pressure::default();
+        let (mut split_apps, mut split_keep) = (Vec::new(), Vec::new());
         let mut files = Vec::new();
 
         for (path, text) in sources {
@@ -296,6 +301,9 @@ impl Config {
             if let Some(p) = raw.pressure {
                 policy::merge_pressure(&mut pressure, &path, p)?;
             }
+            if let Some(s) = raw.split {
+                split::merge(&mut split_apps, &mut split_keep, s);
+            }
             rule_chunks.push((path.clone(), raw.rule));
             files.push(path);
         }
@@ -310,6 +318,8 @@ impl Config {
         let rules = RuleSet::compile(rule_chunks, &profiles)?;
         let exceptions = Exceptions::compile(&exceptions)
             .map_err(|e| ConfigError::invalid(Path::new("[exceptions]"), e))?;
+        let split = Split::compile(&split_apps, &split_keep)
+            .map_err(|e| ConfigError::invalid(Path::new("[split]"), e))?;
         let roles = roles::resolve(
             raw_roles.iter_mut().map(|(p, r)| (p.as_path(), std::mem::take(r))).collect(),
             &profiles,
@@ -321,6 +331,7 @@ impl Config {
             rules,
             exceptions,
             roles,
+            split,
             sched_ext,
             eevdf,
             pressure,

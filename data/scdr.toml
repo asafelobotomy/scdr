@@ -20,6 +20,17 @@ exec_recheck_ms = 1500
 # io_weight takes effect there. Off by default; restored on shutdown.
 iocost = false
 
+# Agent apps run their tools (Claude Code sessions with their shells, tests,
+# compilers and VMs; MCP servers) inside the app's own scope, so every
+# per-app control treated them as the app. For these apps (by the name of
+# their app.slice unit, as `scdrctl ps` shows it), each process running a
+# different binary from the app moves, with what it starts, into a scope of
+# its own: app-<app>-tools-<pid>.scope. `keep` lists helpers that stay.
+# Set `apps = []` in /etc/scdr/scdr.toml to turn it off.
+[split]
+apps = ["com.anthropic.Claude", "uq-com_anthropic_Claude"]
+keep = ["chrome_crashpad*", "chrome-sandbox", "crashpad_handler"]
+
 [exceptions]
 # Never touched. scx_* are sched_ext schedulers and scx_loader: demoting
 # them with system services would slow the userspace half of a scheduler.

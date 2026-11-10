@@ -9,6 +9,7 @@ mod lineage;
 mod pressure;
 mod report;
 mod roles;
+mod split;
 mod transition;
 mod unit_jobs;
 
@@ -121,6 +122,7 @@ pub struct Service {
     procs: HashMap<u32, Entry>,
     units: BTreeMap<crate::units::UnitId, units::UnitState>,
     unit_queue: units::UnitQueue,
+    split: split::SplitState,
     autogroup_original: Option<bool>,
     /// Disks (MAJ:MIN) on which scdr enabled iocost.
     iocost_enabled: Vec<String>,
@@ -161,6 +163,7 @@ impl Service {
             procs: HashMap::new(),
             units: BTreeMap::new(),
             unit_queue: Default::default(),
+            split: Default::default(),
             autogroup_original: None,
             iocost_enabled: Vec::new(),
             uclamp_active: false,
@@ -276,6 +279,7 @@ impl Service {
             self.evaluate(pid, Trigger::Scan);
         }
         self.sweep_units();
+        self.sweep_split();
     }
 
     pub fn reload(&mut self, config: Config) {
@@ -382,5 +386,6 @@ impl Service {
         self.transition(pid, &info, trigger, matched, excepted, inherit);
         let managed = matches!(self.procs[&pid].state, State::Managed(_));
         self.sync_unit(pid, &info, unit_profile.as_ref().filter(|_| managed));
+        self.maybe_split(pid, &info, trigger);
     }
 }

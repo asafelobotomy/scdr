@@ -27,6 +27,13 @@ pub enum UnitJob {
         applied: Weights,
         dry_run: bool,
     },
+    /// Move an app's tool process tree into a scope of its own (`split`).
+    Split {
+        id: UnitId,
+        pids: Vec<u32>,
+        what: String,
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +53,11 @@ pub enum UnitDone {
     },
     Restored {
         id: UnitId,
+    },
+    Split {
+        id: UnitId,
+        pids: Vec<u32>,
+        result: Result<(), String>,
     },
 }
 
@@ -102,6 +114,17 @@ pub fn run(job: UnitJob) -> UnitDone {
                 applied: want,
                 kept,
             }
+        }
+        UnitJob::Split { id, pids, what, dry_run } => {
+            let result = match (&id.user, dry_run) {
+                (_, true) => {
+                    tracing::info!("would move {what} ({} processes) into {}", pids.len(), id.unit);
+                    Ok(())
+                }
+                (Some(user), false) => units::start_scope(user, &id.unit, &pids, &what),
+                (None, false) => Err("system units are not split".into()),
+            };
+            UnitDone::Split { id, pids, result }
         }
         UnitJob::Restore {
             id,

@@ -47,46 +47,79 @@ impl UnitId {
     }
 
     /// Runs `systemctl ARGS` against the manager that owns this unit.
-    ///
-    /// A user's manager only accepts its own user on its private socket, and
-    /// refuses root. `--machine=USER@` gets there through `systemd-run` and a
-    /// PAM login, which opened a full logind session per call (hundreds an
-    /// hour under CPU pressure, each announced to every logind client). So
-    /// run systemctl as that user instead; that needs CAP_SETUID and
-    /// CAP_SETGID, and without them scdr falls back to `--machine`.
     fn systemctl(&self, args: &[&str]) -> Result<String, String> {
-        if let Some(user) = &self.user {
-            if AS_USER.load(Ordering::Relaxed) {
-                if let Some((uid, gid)) = user_ids(user) {
-                    let mut cmd = Command::new("systemctl");
-                    cmd.uid(uid)
-                        .gid(gid)
-                        .env("XDG_RUNTIME_DIR", format!("/run/user/{uid}"))
-                        .env_remove("DBUS_SESSION_BUS_ADDRESS")
-                        .args(["--user", "--no-ask-password"])
-                        .args(args);
-                    match run(cmd) {
-                        // The uid switch was refused (no CAP_SETUID), or the
-                        // manager's socket isn't reachable (a sandbox hiding
-                        // /run/user): use --machine from now on.
-                        Err(e) if e.unreachable() => {
-                            AS_USER.store(false, Ordering::Relaxed);
-                            tracing::warn!(
-                                "can't run systemctl as {user} ({e}); using --machine, which opens a login session per call"
-                            );
-                        }
-                        other => return other.map_err(|e| e.to_string()),
+        manager_command(self.user.as_deref(), "systemctl", args)
+    }
+}
+
+/// Runs `PROGRAM ARGS` (systemctl or busctl) against `user`'s manager, or
+/// the system manager for `None`.
+///
+/// A user's manager only accepts its own user on its private socket, and
+/// refuses root. `--machine=USER@` gets there through `systemd-run` and a
+/// PAM login, which opened a full logind session per call (hundreds an
+/// hour under CPU pressure, each announced to every logind client). So
+/// run it as that user instead; that needs CAP_SETUID and CAP_SETGID, and
+/// without them scdr falls back to `--machine`.
+fn manager_command(user: Option<&str>, program: &str, args: &[&str]) -> Result<String, String> {
+    let extra: &[&str] = if program == "systemctl" { &["--no-ask-password"] } else { &[] };
+    if let Some(user) = user {
+        if AS_USER.load(Ordering::Relaxed) {
+            if let Some((uid, gid)) = user_ids(user) {
+                let mut cmd = Command::new(program);
+                cmd.uid(uid)
+                    .gid(gid)
+                    .env("XDG_RUNTIME_DIR", format!("/run/user/{uid}"))
+                    .env_remove("DBUS_SESSION_BUS_ADDRESS")
+                    .arg("--user")
+                    .args(extra)
+                    .args(args);
+                match run(cmd) {
+                    // The uid switch was refused (no CAP_SETUID), or the
+                    // manager's socket isn't reachable (a sandbox hiding
+                    // /run/user): use --machine from now on.
+                    Err(e) if e.unreachable() => {
+                        AS_USER.store(false, Ordering::Relaxed);
+                        tracing::warn!(
+                            "can't run {program} as {user} ({e}); using --machine, which opens a login session per call"
+                        );
                     }
+                    other => return other.map_err(|e| e.to_string()),
                 }
             }
         }
-        let mut cmd = Command::new("systemctl");
-        if let Some(user) = &self.user {
-            cmd.arg("--user").arg(format!("--machine={user}@"));
-        }
-        cmd.arg("--no-ask-password").args(args);
-        run(cmd).map_err(|e| e.to_string())
     }
+    let mut cmd = Command::new(program);
+    if let Some(user) = user {
+        cmd.arg("--user").arg(format!("--machine={user}@"));
+    }
+    cmd.args(extra).args(args);
+    run(cmd).map_err(|e| e.to_string())
+}
+
+/// Moves running processes of `user` into a new transient scope of their
+/// manager (as `systemd-run --scope` does for itself). What they start later
+/// stays in it.
+pub fn start_scope(user: &str, unit: &str, pids: &[u32], description: &str) -> Result<(), String> {
+    let count = pids.len().to_string();
+    let pids: Vec<String> = pids.iter().map(u32::to_string).collect();
+    let mut args = vec![
+        "call",
+        "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager",
+        "StartTransientUnit",
+        "ssa(sv)a(sa(sv))",
+        unit,
+        "fail",
+        "3",
+        "PIDs",
+        "au",
+        &count,
+    ];
+    args.extend(pids.iter().map(String::as_str));
+    args.extend(["Description", "s", description, "CollectMode", "s", "inactive-or-failed", "0"]);
+    manager_command(Some(user), "busctl", &args).map(|_| ())
 }
 
 /// Whether user managers are reached as their user (see `UnitId::systemctl`);

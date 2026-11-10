@@ -73,6 +73,14 @@ benchmark. Packaged for the AUR (`packaging/aur`).
   of two apps and two systemctl calls. They come back if devbox stops.
   Packaged separately as `scx-devbox` by the same PKGBUILD; not started
   unless you enable it (`systemctl enable --now scx_devbox`).
+- Splits agent tools out of their app (`[split]`, on for Claude Desktop):
+  Claude Desktop runs Claude Code sessions, their shells, tests and
+  compilers, and MCP servers inside its own app scope, so they counted as
+  "the focused app". scdr moves each process running a different binary
+  from the app, with what it starts, into `app-<app>-tools-<pid>.scope`
+  (through systemd, a second after it starts, so short commands are left
+  alone). The app's UI and its tools then get their own CPU, IO and memory
+  treatment, and scx_devbox's focus covers only the UI.
 - Restores everything on `systemctl stop scdrd`: threads, unit weights,
   autogroup and iocost. systemd keeps an empty runtime drop-in
   (`CPUWeight=`) for each unit it touched under `/run`; it has no effect and is
