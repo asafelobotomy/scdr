@@ -143,7 +143,7 @@ impl Service {
                     "io".into(),
                     format!(
                         "user@{uid}.service doesn't delegate io: IOWeight on that user's apps does nothing \
-                         until the next login (scdr's user@.service.d/50-scdr-io.conf)"
+                         until `systemctl daemon-reload` (with scdr's user@.service.d/50-scdr-io.conf)"
                     ),
                 ));
             }

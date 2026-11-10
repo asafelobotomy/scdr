@@ -34,7 +34,7 @@ benchmark. Packaged for the AUR (`packaging/aur`).
 - Reports per disk whether io priorities and `IOWeight=` take effect (only
   under bfq, or with iocost). systemd doesn't delegate the io controller to
   user managers, so `IOWeight=` on apps would do nothing; the package adds
-  it (`user@.service.d/50-scdr-io.conf`), effective from your next login. `[system] iocost = true` enables iocost where it
+  it (`user@.service.d/50-scdr-io.conf`), effective once systemd reloads, which installing the package does. `[system] iocost = true` enables iocost where it
   would help.
 - Only changes values it owns. It remembers each process's original state and
   leaves alone threads that rtkit, GameMode, `renice` or `chrt` changed.
