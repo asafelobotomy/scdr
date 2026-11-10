@@ -40,6 +40,7 @@ static const char *stat_names[DEVBOX_NR_STATS] = {
 	[DST_STARVE_RESCUE] = "starve_rescue",
 	[DST_HINT_DEMOTED]  = "hint_demoted",
 	[DST_CGROUP_WEIGHTED] = "cgroup_weighted",
+	[DST_PERF_SET]      = "perf_set",
 };
 
 static void usage(const char *prog)
@@ -61,6 +62,8 @@ static void usage(const char *prog)
 "  -p, --batch-min-run-us N  batch runs this long before it can be preempted\n"
 "                            (default 1000)\n"
 "  -n, --no-preempt          don't preempt batch tasks for interactive wakeups\n"
+"  -F, --no-cpufreq          leave CPU frequency targets alone (the kernel keeps\n"
+"                            them at maximum; only matters under schedutil)\n"
 "  -i, --stats SECS          print stats every SECS seconds (0 = off, default 0)\n"
 "  -v, --verbose             libbpf debug output\n"
 "  -h, --help\n", prog);
@@ -234,9 +237,20 @@ static enum run_result run(const struct scx_devbox__rodata *cfg, int ncpu,
 			continue;
 		read_stats(skel, ncpu, cur);
 		for (int i = 0; i < DEVBOX_NR_STATS; i++) {
-			printf("%s=%llu%s", stat_names[i], cur[i] - prev[i],
-			       i == DEVBOX_NR_STATS - 1 ? "\n" : " ");
+			printf("%s=%llu ", stat_names[i], cur[i] - prev[i]);
 			prev[i] = cur[i];
+		}
+		/* Mean frequency target over CPUs that have one, of 1024. */
+		{
+			unsigned long long sum = 0, n = 0;
+
+			for (int c = 0; c < ncpu && c < 512; c++) {
+				if (skel->bss->cpu_perf[c].perf) {
+					sum += skel->bss->cpu_perf[c].perf;
+					n++;
+				}
+			}
+			printf("perf_avg=%llu/1024\n", n ? sum / n : 1024);
 		}
 		fflush(stdout);
 	}
@@ -271,6 +285,7 @@ int main(int argc, char **argv)
 		{ "lag-us",            required_argument, 0, 'l' },
 		{ "batch-min-run-us",  required_argument, 0, 'p' },
 		{ "no-preempt",        no_argument,       0, 'n' },
+		{ "no-cpufreq",        no_argument,       0, 'F' },
 		{ "stats",             required_argument, 0, 'i' },
 		{ "verbose",           no_argument,       0, 'v' },
 		{ "help",              no_argument,       0, 'h' },
@@ -293,7 +308,7 @@ int main(int argc, char **argv)
 	cfg = *skel->rodata;
 	scx_devbox__destroy(skel);
 
-	while ((opt = getopt_long(argc, argv, "s:m:b:t:H:w:l:p:ni:vh", opts,
+	while ((opt = getopt_long(argc, argv, "s:m:b:t:H:w:l:p:nFi:vh", opts,
 				  NULL)) != -1) {
 		switch (opt) {
 		case 's': cfg.slice_ns = parse_ull(optarg, "slice") * 1000; break;
@@ -305,6 +320,7 @@ int main(int argc, char **argv)
 		case 'l': cfg.lag_ns = parse_ull(optarg, "lag") * 1000; break;
 		case 'p': cfg.batch_min_run_ns = parse_ull(optarg, "batch-min-run") * 1000; break;
 		case 'n': cfg.preempt_batch = false; break;
+		case 'F': cfg.cpufreq_ctl = false; break;
 		case 'i': stats_secs = parse_ull(optarg, "stats"); break;
 		case 'v': verbose = true; break;
 		case 'h': usage(argv[0]); return 0;

@@ -14,7 +14,17 @@ enum devbox_stat {
 	DST_STARVE_RESCUE, /* batch served ahead of interactive (starvation guard) */
 	DST_HINT_DEMOTED,  /* nice<0 / hinted task demoted to batch as a hog */
 	DST_CGROUP_WEIGHTED, /* enqueue of a task whose cgroup factor is not 1.0 */
+	DST_PERF_SET,      /* CPU frequency target sent (scx_bpf_cpuperf_set) */
 	DEVBOX_NR_STATS,
+};
+
+/* Per-CPU frequency state (devbox.perf.h); the loader reads perf for stats. */
+struct cpu_perf {
+	__u64 busy_since;	/* when the running task started; 0 when idle */
+	__u64 busy;		/* busy time in the current window */
+	__u64 win_start;
+	__u32 util;		/* smoothed utilisation, of SCX_CPUPERF_ONE */
+	__u32 perf;		/* last target sent; 0 = none yet (kernel default: max) */
 };
 
 #define EXIT_MSG_LEN 256

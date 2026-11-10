@@ -29,6 +29,8 @@ loads sched_ext schedulers with a GPL-compatible license.
 | **cgroup weights** | `cpu.weight` is honoured. Each cgroup keeps a flattened factor (product of weight/100 down from the root, fixed point); a task is charged vruntime and deadline at nice weight × cgroup factor, clamped to 1–10000, so weight 1 is deprioritised but never starved. |
 | **Per-CPU kthreads** | Dispatched straight to their CPU. |
 | **Idle CPU pick** | The kernel default: SMT-aware, prefers the previous CPU, keeps migrations low. |
+| **CPU frequency** | Under the schedutil governor, sets each CPU's frequency target from its measured utilisation (10 ms windows, fast rise, slow decay, 25% headroom, scaled to the CPU's capacity), with a 75% floor for scdr latency-hinted tasks. The kernel's default without this is maximum on every busy CPU. Drivers that choose frequencies themselves (intel_pstate active, amd-pstate active) ignore it. `-F` turns it off. |
+| **Idle CPU pick** (kfunc) | `scx_bpf_select_cpu_and()`, falling back to the deprecated `scx_bpf_select_cpu_dfl()` on kernels without it. |
 | **CPU hotplug** | Handled, so suspend/resume and CPUs going offline don't unload it. If the kernel unloads it anyway, the loader restarts it in place when the kernel asks, or exits non-zero so systemd does. |
 
 ### How scdr drives it
@@ -128,10 +130,12 @@ system is already back on EEVDF; the unit retries 3 times and then stays there.
 | `-p, --batch-min-run-us` | 1000 | least run time before a batch task can be preempted |
 | `-l, --lag-us` | 20000 | most sleep credit a waking task gets |
 | `-n, --no-preempt` | | never preempt batch for interactive wakeups |
+| `-F, --no-cpufreq` | | leave CPU frequency targets at the kernel default (maximum) |
 | `-i, --stats` | 0 | print counters every N seconds |
 
 Stats: `direct_idle` (woke onto an idle CPU), `interactive` / `batch`
 (enqueues per DSQ), `scdr_hint` (enqueues carrying an scdr slice),
 `preempt_batch`, `idle_kick`, `starve_rescue`, `hint_demoted` (enqueues of a
 favoured task demoted to batch as a hog), `cgroup_weighted` (enqueues of
-tasks in a cgroup whose factor is not 1.0).
+tasks in a cgroup whose factor is not 1.0), `perf_set` (frequency targets
+sent) and `perf_avg` (mean target over CPUs, of 1024).

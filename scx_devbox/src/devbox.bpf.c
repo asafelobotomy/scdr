@@ -35,6 +35,7 @@
 #include "devbox.h"
 #include "devbox.bpf.h"
 #include "devbox.cgroup.h"
+#include "devbox.perf.h"
 
 char _license[] SEC("license") = "GPL";
 
@@ -108,7 +109,18 @@ s32 BPF_STRUCT_OPS(devbox_select_cpu, struct task_struct *p, s32 prev_cpu,
 	bool is_idle = false;
 	s32 cpu;
 
-	cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &is_idle);
+	/*
+	 * scx_bpf_select_cpu_dfl() is deprecated upstream in favour of
+	 * scx_bpf_select_cpu_and(); keep the old call for kernels without it.
+	 */
+	if (bpf_ksym_exists(scx_bpf_select_cpu_and)) {
+		cpu = scx_bpf_select_cpu_and(p, prev_cpu, wake_flags, p->cpus_ptr, 0);
+		is_idle = cpu >= 0;
+		if (!is_idle)
+			cpu = prev_cpu;
+	} else {
+		cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &is_idle);
+	}
 	if (is_idle) {
 		tctx = lookup_tctx(p);
 		bool batch = tctx ? tctx->batch : false;
@@ -242,6 +254,7 @@ void BPF_STRUCT_OPS(devbox_running, struct task_struct *p)
 	if (!tctx)
 		return;
 	tctx->run_at = bpf_ktime_get_ns();
+	perf_running(scx_bpf_task_cpu(p), tctx->run_at);
 	if (tctx->batch) {
 		if (vtime_before(vtime_now[BATCH_DSQ], tctx->vruntime))
 			vtime_now[BATCH_DSQ] = tctx->vruntime;
@@ -260,6 +273,7 @@ void BPF_STRUCT_OPS(devbox_stopping, struct task_struct *p, bool runnable)
 	u64 used;
 
 	cpu_batch_since[CPU_IDX(scx_bpf_task_cpu(p))] = 0;
+	perf_stopping(scx_bpf_task_cpu(p), bpf_ktime_get_ns());
 	if (!tctx)
 		return;
 
@@ -338,6 +352,11 @@ void BPF_STRUCT_OPS(devbox_exit, struct scx_exit_info *ei)
 	exit_kind = ei->kind;
 }
 
+void BPF_STRUCT_OPS(devbox_tick, struct task_struct *p)
+{
+	perf_tick(scx_bpf_task_cpu(p), p, bpf_ktime_get_ns());
+}
+
 SEC(".struct_ops.link")
 struct sched_ext_ops devbox_ops = {
 	.select_cpu	= (void *)devbox_select_cpu,
@@ -345,6 +364,7 @@ struct sched_ext_ops devbox_ops = {
 	.dispatch	= (void *)devbox_dispatch,
 	.running	= (void *)devbox_running,
 	.stopping	= (void *)devbox_stopping,
+	.tick		= (void *)devbox_tick,
 	.quiescent	= (void *)devbox_quiescent,
 	.enable		= (void *)devbox_enable,
 	.init_task	= (void *)devbox_init_task,
