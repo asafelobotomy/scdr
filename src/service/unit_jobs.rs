@@ -30,8 +30,15 @@ pub enum UnitJob {
     /// Move an app's tool process tree into a scope of its own (`split`).
     Split {
         id: UnitId,
+        slice: String,
         pids: Vec<u32>,
         what: String,
+        dry_run: bool,
+    },
+    /// `set-property --runtime` (an agent app's tools slice limits).
+    Props {
+        id: UnitId,
+        props: Vec<String>,
         dry_run: bool,
     },
 }
@@ -58,6 +65,9 @@ pub enum UnitDone {
         id: UnitId,
         pids: Vec<u32>,
         result: Result<(), String>,
+    },
+    Props {
+        id: UnitId,
     },
 }
 
@@ -115,16 +125,34 @@ pub fn run(job: UnitJob) -> UnitDone {
                 kept,
             }
         }
-        UnitJob::Split { id, pids, what, dry_run } => {
+        UnitJob::Split {
+            id,
+            slice,
+            pids,
+            what,
+            dry_run,
+        } => {
             let result = match (&id.user, dry_run) {
                 (_, true) => {
-                    tracing::info!("would move {what} ({} processes) into {}", pids.len(), id.unit);
+                    tracing::info!("would move {what} ({} processes) into {} in {slice}", pids.len(), id.unit);
                     Ok(())
                 }
-                (Some(user), false) => units::start_scope(user, &id.unit, &pids, &what),
+                (Some(user), false) => units::start_scope(user, &id.unit, &slice, &pids, &what),
                 (None, false) => Err("system units are not split".into()),
             };
             UnitDone::Split { id, pids, result }
+        }
+        UnitJob::Props { id, props, dry_run } => {
+            let list = props.join(" ");
+            if dry_run {
+                tracing::info!("{id}: would set {list}");
+            } else {
+                match units::set_properties(&id, &props) {
+                    Ok(()) => tracing::info!("{id}: set {list}"),
+                    Err(e) => tracing::warn!("{id}: can't set {list}: {e}"),
+                }
+            }
+            UnitDone::Props { id }
         }
         UnitJob::Restore {
             id,

@@ -8,7 +8,8 @@
 //!
 //! scx_devbox can do both in the scheduler instead. When it runs and its
 //! loader announces the hints API (/run/scx_devbox/api), scdr writes the
-//! focused app's cgroup and each user's app.slice to `devbox-hints` in its
+//! focused app's cgroup, each user's app.slice and agent tools slices (as
+//! neutral: never held back) to `devbox-hints` in its
 //! runtime directory; the loader turns them into cgroup ids in the
 //! scheduler's memory. The foreground and background roles then step aside:
 //! a focus change is one small file write, and unfocused apps are weighted
@@ -170,6 +171,8 @@ impl Service {
         for uid in self.session_uids() {
             lines.push(format!("apps {}", app_slice(uid).trim_end_matches('/')));
         }
+        // Agent tools: work the user waits on, so neither boosted nor held back.
+        lines.extend(self.tools_slice_cgroups().into_iter().map(|cg| format!("neutral {cg}")));
         let text = lines.join("\n") + "\n";
         if self.hints_written.as_deref() == Some(text.as_str()) {
             return;

@@ -97,7 +97,10 @@ impl Service {
 
     pub(super) fn queue_unit_job(&mut self, job: UnitJob) {
         let id = match &job {
-            UnitJob::Claim { id, .. } | UnitJob::Restore { id, .. } | UnitJob::Split { id, .. } => id.clone(),
+            UnitJob::Claim { id, .. }
+            | UnitJob::Restore { id, .. }
+            | UnitJob::Split { id, .. }
+            | UnitJob::Props { id, .. } => id.clone(),
         };
         self.unit_queue.in_flight.insert(id);
         self.unit_queue.outbox.push(job);
@@ -133,7 +136,7 @@ impl Service {
                 self.unit_queue.in_flight.remove(&id);
                 self.unit_queue.failed.insert(id, Instant::now() + FAILED_BACKOFF);
             }
-            UnitDone::Restored { id } => {
+            UnitDone::Restored { id } | UnitDone::Props { id } => {
                 self.unit_queue.in_flight.remove(&id);
             }
             UnitDone::Split { id, pids, result } => {

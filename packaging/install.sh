@@ -13,6 +13,7 @@ install -Dm644 data/scdr.toml "$dest/usr/share/scdr/scdr.toml"
 install -dm755 "$dest/usr/share/scdr/rules.d" "$dest/etc/scdr/rules.d"
 install -Dm644 data/scdrd.service "$dest/usr/lib/systemd/system/scdrd.service"
 install -Dm644 data/scdr-session.service "$dest/usr/lib/systemd/user/scdr-session.service"
+install -Dm644 data/user@-io.conf "$dest/usr/lib/systemd/system/user@.service.d/50-scdr-io.conf"
 install -Dm644 data/org.scdr.Daemon1.conf "$dest/usr/share/dbus-1/system.d/org.scdr.Daemon1.conf"
 install -Dm644 data/org.scdr.policy "$dest/usr/share/polkit-1/actions/org.scdr.policy"
 install -Dm644 -t "$dest/usr/share/gnome-shell/extensions/$ext" \

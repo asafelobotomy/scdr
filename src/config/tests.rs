@@ -238,3 +238,25 @@ fn split_lists_replace_lower_files() {
     // Nothing set: off.
     assert!(!cfg(&[""]).split.enabled);
 }
+
+#[test]
+fn split_slice_limits_merge_and_validate() {
+    let load = |files: &[&str]| {
+        Config::from_sources(files.iter().enumerate().map(|(i, t)| (format!("{i}.toml").into(), (*t).into())).collect())
+    };
+    let base = "[split]\napps = [\"a\"]\nmemory_high = \"50%\"\nio_weight = 50\n";
+    let c = load(&[base, "[split]\nio_weight = 80\n"]).unwrap();
+    assert_eq!(c.split.limits.memory_high.as_deref(), Some("50%"));
+    assert_eq!(c.split.limits.io_weight, Some(80));
+    assert_eq!(
+        c.split.limits.properties(),
+        ["MemoryHigh=50%", "IOWeight=80", "CPUWeight="].map(String::from)
+    );
+    for good in ["4G", "512M", "infinity", "12.5%"] {
+        assert!(load(&[&format!("[split]\nmemory_high = \"{good}\"\n")]).is_ok(), "{good}");
+    }
+    for bad in ["4GB", "lots", "150%", "0"] {
+        assert!(load(&[&format!("[split]\nmemory_high = \"{bad}\"\n")]).is_err(), "{bad}");
+    }
+    assert!(load(&["[split]\nio_weight = 0\n"]).is_err());
+}

@@ -22,7 +22,7 @@ use crate::rules::{Exceptions, RuleSet};
 pub use profile::{NamedProfile, Profile, valid_nice, valid_oom_score_adj};
 pub use policy::{Eevdf, EevdfConfig, Pressure, SchedChoice, SchedExt};
 pub use roles::{Role, RoleSet, Roles};
-pub use split::Split;
+pub use split::{SliceLimits, Split};
 use profile::{RawProfile, resolve_profile};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -262,7 +262,7 @@ impl Config {
         let mut sched_ext = SchedExt::default();
         let mut eevdf = EevdfConfig::default();
         let mut pressure = Pressure::default();
-        let (mut split_apps, mut split_keep) = (Vec::new(), Vec::new());
+        let mut split = split::Merged::default();
         let mut files = Vec::new();
 
         for (path, text) in sources {
@@ -302,7 +302,7 @@ impl Config {
                 policy::merge_pressure(&mut pressure, &path, p)?;
             }
             if let Some(s) = raw.split {
-                split::merge(&mut split_apps, &mut split_keep, s);
+                split::merge(&mut split, s);
             }
             rule_chunks.push((path.clone(), raw.rule));
             files.push(path);
@@ -318,7 +318,7 @@ impl Config {
         let rules = RuleSet::compile(rule_chunks, &profiles)?;
         let exceptions = Exceptions::compile(&exceptions)
             .map_err(|e| ConfigError::invalid(Path::new("[exceptions]"), e))?;
-        let split = Split::compile(&split_apps, &split_keep)
+        let split = Split::compile(&split.apps, &split.keep, split.limits)
             .map_err(|e| ConfigError::invalid(Path::new("[split]"), e))?;
         let roles = roles::resolve(
             raw_roles.iter_mut().map(|(p, r)| (p.as_path(), std::mem::take(r))).collect(),

@@ -98,9 +98,9 @@ fn manager_command(user: Option<&str>, program: &str, args: &[&str]) -> Result<S
 }
 
 /// Moves running processes of `user` into a new transient scope of their
-/// manager (as `systemd-run --scope` does for itself). What they start later
-/// stays in it.
-pub fn start_scope(user: &str, unit: &str, pids: &[u32], description: &str) -> Result<(), String> {
+/// manager (as `systemd-run --scope` does for itself), in `slice`. What they
+/// start later stays in it.
+pub fn start_scope(user: &str, unit: &str, slice: &str, pids: &[u32], description: &str) -> Result<(), String> {
     let count = pids.len().to_string();
     let pids: Vec<String> = pids.iter().map(u32::to_string).collect();
     let mut args = vec![
@@ -112,13 +112,14 @@ pub fn start_scope(user: &str, unit: &str, pids: &[u32], description: &str) -> R
         "ssa(sv)a(sa(sv))",
         unit,
         "fail",
-        "3",
+        "4",
         "PIDs",
         "au",
         &count,
     ];
     args.extend(pids.iter().map(String::as_str));
-    args.extend(["Description", "s", description, "CollectMode", "s", "inactive-or-failed", "0"]);
+    args.extend(["Description", "s", description, "Slice", "s", slice]);
+    args.extend(["CollectMode", "s", "inactive-or-failed", "0"]);
     manager_command(Some(user), "busctl", &args).map(|_| ())
 }
 
@@ -252,6 +253,11 @@ pub fn set(id: &UnitId, want: &Weights, current: &Weights) -> Result<(), String>
     if want.io != current.io {
         props.push(format!("IOWeight={}", fmt(want.io)));
     }
+    set_properties(id, &props)
+}
+
+/// `systemctl set-property --runtime` on `id`.
+pub fn set_properties(id: &UnitId, props: &[String]) -> Result<(), String> {
     if props.is_empty() {
         return Ok(());
     }

@@ -16,7 +16,9 @@
  * (an agent's tests, compilers or VMs) still go to batch, and get neither. Tasks in a user's app.slice but not in the
  * focused app are weighted down by bg_factor_pct, and only while the CPUs
  * are contended (more queued tasks than CPUs), measured here at enqueue
- * rather than waiting on a pressure average.
+ * rather than waiting on a pressure average. Neutral cgroups (an agent
+ * app's tools slice: builds and tests the user is waiting on) are inside
+ * app.slice but get neither treatment.
  */
 #ifndef __DEVBOX_FOCUS_H
 #define __DEVBOX_FOCUS_H
@@ -37,6 +39,8 @@ u64 focus_cgid[MAX_HINTS];
 u32 focus_level[MAX_HINTS];
 u64 apps_cgid[MAX_HINTS];
 u32 apps_level[MAX_HINTS];
+u64 neutral_cgid[MAX_HINTS];
+u32 neutral_level[MAX_HINTS];
 u32 hints_gen;
 
 /*
@@ -97,6 +101,10 @@ static u8 compute_focus_class(struct task_struct *p)
 			fc = FC_FOCUS;
 			goto out;
 		}
+	}
+	for (i = 0; i < MAX_HINTS; i++) {
+		if (cg_under(cg, neutral_cgid[i], neutral_level[i]))
+			goto out;
 	}
 	for (i = 0; i < MAX_HINTS; i++) {
 		if (cg_under(cg, apps_cgid[i], apps_level[i])) {

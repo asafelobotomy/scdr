@@ -9,6 +9,8 @@
  *
  *   focus <cgroup path>   the focused app's unit, e.g. /user.slice/.../app.slice/app-foo-12.scope
  *   apps <cgroup path>    a user's app.slice
+ *   neutral <cgroup path> neither focused nor background (an agent app's
+ *                         tools slice), though inside app.slice
  *
  * The loader resolves each path to its cgroup id (the inode number of its
  * cgroupfs directory, which is what the kernel uses as the id), stores the
@@ -58,9 +60,9 @@ static bool cgroup_id(const char *path, __u64 *id)
 /* Reads the hints file (missing = no hints) into the scheduler. */
 static void hints_load(struct scx_devbox *skel, bool verbose_log)
 {
-	__u64 focus[MAX_HINTS] = { 0 }, apps[MAX_HINTS] = { 0 };
-	__u32 focus_lv[MAX_HINTS] = { 0 }, apps_lv[MAX_HINTS] = { 0 };
-	unsigned int nf = 0, na = 0;
+	__u64 focus[MAX_HINTS] = { 0 }, apps[MAX_HINTS] = { 0 }, neutral[MAX_HINTS] = { 0 };
+	__u32 focus_lv[MAX_HINTS] = { 0 }, apps_lv[MAX_HINTS] = { 0 }, neutral_lv[MAX_HINTS] = { 0 };
+	unsigned int nf = 0, na = 0, nn = 0;
 	char line[4200];
 	FILE *f = fopen(HINTS_FILE, "r");
 
@@ -81,6 +83,9 @@ static void hints_load(struct scx_devbox *skel, bool verbose_log)
 		} else if (!strcmp(line, "apps") && na < MAX_HINTS) {
 			apps[na] = id;
 			apps_lv[na++] = cgroup_level(path);
+		} else if (!strcmp(line, "neutral") && nn < MAX_HINTS) {
+			neutral[nn] = id;
+			neutral_lv[nn++] = cgroup_level(path);
 		}
 	}
 	if (f)
@@ -91,11 +96,13 @@ static void hints_load(struct scx_devbox *skel, bool verbose_log)
 		skel->bss->focus_level[i] = focus_lv[i];
 		skel->bss->apps_cgid[i] = apps[i];
 		skel->bss->apps_level[i] = apps_lv[i];
+		skel->bss->neutral_cgid[i] = neutral[i];
+		skel->bss->neutral_level[i] = neutral_lv[i];
 	}
 	/* Publish after the ids: tasks recompute their class on the new gen. */
 	__atomic_add_fetch(&skel->bss->hints_gen, 1, __ATOMIC_RELEASE);
 	if (verbose_log)
-		fprintf(stderr, "hints: %u focused, %u app slices\n", nf, na);
+		fprintf(stderr, "hints: %u focused, %u app slices, %u neutral\n", nf, na, nn);
 }
 
 /* Tells scdr that this loader takes hints. */

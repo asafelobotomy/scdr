@@ -149,12 +149,14 @@ impl Service {
                 Role::Audio => sessions.iter().any(|s| s.audio.get(&info.pid) == Some(&info.start_time)),
                 // Left to scx_devbox while it takes hints (see `devbox`).
                 Role::Foreground => focused && !self.devbox_hints,
-                // Never the focused app, even with the foreground role off.
+                // Never the focused app, even with the foreground role off,
+                // nor agent tools (work the user is waiting on).
                 Role::Background => {
                     !self.devbox_hints
                         && self.pressure_active
                         && !focused
                         && info.cgroup.starts_with(&app_slice(info.uid))
+                        && !super::split::in_tools_slice(&info.cgroup)
                 }
             }
         };

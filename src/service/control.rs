@@ -65,6 +65,7 @@ impl Service {
         }
         tracing::info!("restored {reverted} processes");
         self.restore_units();
+        self.restore_split();
         self.restore_system();
     }
 

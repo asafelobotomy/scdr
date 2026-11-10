@@ -32,7 +32,9 @@ benchmark. Packaged for the AUR (`packaging/aur`).
   where needed and stays the owner of the cgroup tree. Weights a unit sets
   itself are never overridden; KDE's baloo ships with `CPUWeight=1`, for example.
 - Reports per disk whether io priorities and `IOWeight=` take effect (only
-  under bfq, or with iocost). `[system] iocost = true` enables iocost where it
+  under bfq, or with iocost). systemd doesn't delegate the io controller to
+  user managers, so `IOWeight=` on apps would do nothing; the package adds
+  it (`user@.service.d/50-scdr-io.conf`), effective from your next login. `[system] iocost = true` enables iocost where it
   would help.
 - Only changes values it owns. It remembers each process's original state and
   leaves alone threads that rtkit, GameMode, `renice` or `chrt` changed.
@@ -79,8 +81,12 @@ benchmark. Packaged for the AUR (`packaging/aur`).
   "the focused app". scdr moves each process running a different binary
   from the app, with what it starts, into `app-<app>-tools-<pid>.scope`
   (through systemd, a second after it starts, so short commands are left
-  alone). The app's UI and its tools then get their own CPU, IO and memory
-  treatment, and scx_devbox's focus covers only the UI.
+  alone). The tool scopes share `app-<app>-tools.slice`, which gets limits
+  for all of them together: `MemoryHigh=50%`, so a runaway build is
+  reclaimed and slowed before the app's window is swapped out, and
+  `IOWeight=50`, so the window's reads go ahead of a build's writes.
+  scx_devbox's focus then covers only the app's window; the tools are
+  neither boosted nor held back as a background app.
 - Restores everything on `systemctl stop scdrd`: threads, unit weights,
   autogroup and iocost. systemd keeps an empty runtime drop-in
   (`CPUWeight=`) for each unit it touched under `/run`; it has no effect and is

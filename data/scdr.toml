@@ -27,9 +27,21 @@ iocost = false
 # different binary from the app moves, with what it starts, into a scope of
 # its own: app-<app>-tools-<pid>.scope. `keep` lists helpers that stay.
 # Set `apps = []` in /etc/scdr/scdr.toml to turn it off.
+#
+# An app's tool scopes share app-<app>-tools.slice, which gets these limits
+# for all of them together (undone when scdr stops):
+#   memory_high  systemd MemoryHigh=: past it the kernel reclaims the tools'
+#                memory first (to swap/zram) and slows their allocations,
+#                instead of the app's window; bytes with K/M/G/T, or % of RAM
+#   io_weight    systemd IOWeight= (needs bfq or [system] iocost)
+#   cpu_weight   systemd CPUWeight= (left unset: tools are work you wait on)
+# scx_devbox treats the slice as neither focused nor background, and scdr's
+# background role leaves it alone.
 [split]
 apps = ["com.anthropic.Claude", "uq-com_anthropic_Claude"]
 keep = ["chrome_crashpad*", "chrome-sandbox", "crashpad_handler"]
+memory_high = "50%"
+io_weight = 50
 
 [exceptions]
 # Never touched. scx_* are sched_ext schedulers and scx_loader: demoting
