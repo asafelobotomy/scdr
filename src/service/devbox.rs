@@ -23,6 +23,31 @@ use std::fs;
 use std::path::Path;
 
 const API: &str = "/run/scx_devbox/api";
+
+/// How long devbox may be gone before scdr takes the roles back. Restarting
+/// it (a package upgrade) takes a second or two; taking over for that window
+/// re-weights every app, and leaves the machine on EEVDF with each app's
+/// tools competing with its UI. The hints file stays, so devbox picks the
+/// focus straight back up when it returns.
+const GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Whether to stay delegated, given whether devbox takes hints right now.
+fn keep_delegating(
+    delegated: bool,
+    available: bool,
+    gone_since: &mut Option<std::time::Instant>,
+    now: std::time::Instant,
+) -> bool {
+    if available {
+        *gone_since = None;
+        return true;
+    }
+    if !delegated {
+        return false;
+    }
+    let since = *gone_since.get_or_insert(now);
+    now.duration_since(since) < GRACE
+}
 const SUPPORTED_API: &str = "1";
 pub const HINTS_FILE: &str = "devbox-hints";
 
@@ -39,7 +64,14 @@ impl Service {
     /// From the policy tick: switch delegation on or off as devbox comes
     /// and goes, and keep the hints current.
     pub fn sync_devbox(&mut self) {
-        let on = !self.dry_run && !self.paused && self.hints_path.is_some() && devbox_takes_hints();
+        let eligible = !self.dry_run && !self.paused && self.hints_path.is_some();
+        let on = eligible
+            && keep_delegating(
+                self.devbox_hints,
+                devbox_takes_hints(),
+                &mut self.devbox_gone_since,
+                std::time::Instant::now(),
+            );
         if on != self.devbox_hints {
             self.devbox_hints = on;
             tracing::info!(
@@ -110,6 +142,26 @@ fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::config::Config;
+
+    #[test]
+    fn a_devbox_restart_doesnt_hand_the_roles_back() {
+        use super::{GRACE, keep_delegating};
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let mut gone = None;
+        assert!(keep_delegating(false, true, &mut gone, t0));
+        // devbox restarting: still delegated within the grace period...
+        assert!(keep_delegating(true, false, &mut gone, t0 + Duration::from_secs(1)));
+        assert!(keep_delegating(true, false, &mut gone, t0 + Duration::from_secs(5)));
+        // ...and back before it ran out: the clock resets.
+        assert!(keep_delegating(true, true, &mut gone, t0 + Duration::from_secs(6)));
+        assert_eq!(gone, None);
+        // Gone for good: handed back once the grace period is over.
+        assert!(keep_delegating(true, false, &mut gone, t0 + Duration::from_secs(7)));
+        assert!(!keep_delegating(true, false, &mut gone, t0 + Duration::from_secs(7) + GRACE));
+        // Never delegated: nothing to keep.
+        assert!(!keep_delegating(false, false, &mut None, t0));
+    }
     use crate::service::Service;
 
     #[test]

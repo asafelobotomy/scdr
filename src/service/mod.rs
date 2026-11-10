@@ -144,6 +144,8 @@ pub struct Service {
     /// Where focus hints for scx_devbox go (see `devbox`); `None` disables them.
     pub hints_path: Option<std::path::PathBuf>,
     devbox_hints: bool,
+    /// When devbox stopped taking hints, while within the grace period.
+    devbox_gone_since: Option<std::time::Instant>,
     hints_written: Option<String>,
 }
 
@@ -173,6 +175,7 @@ impl Service {
             ledger_written: None,
             hints_path: None,
             devbox_hints: false,
+            devbox_gone_since: None,
             hints_written: None,
         }
     }

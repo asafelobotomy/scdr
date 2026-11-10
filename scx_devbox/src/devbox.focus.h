@@ -10,9 +10,10 @@
  * renicing every thread of the old and new app and asking systemd to
  * change two units' CPUWeight.
  *
- * Tasks in a focused cgroup (or below it) are treated like scdr's latency
- * hints: shielded from batch demotion, sorted ahead by focus_bonus_ns and
- * given the frequency floor. Tasks in a user's app.slice but not in the
+ * Interactive tasks in a focused cgroup (or below it) are sorted ahead by
+ * focus_bonus_ns and given the frequency floor, and need focus_thresh_mult
+ * times the usual burst to be demoted to batch. Hogs in the same scope
+ * (an agent's tests, compilers or VMs) still go to batch, and get neither. Tasks in a user's app.slice but not in the
  * focused app are weighted down by bg_factor_pct, and only while the CPUs
  * are contended (more queued tasks than CPUs), measured here at enqueue
  * rather than waiting on a pressure average.
@@ -27,6 +28,8 @@ enum focus_class {
 };
 
 const volatile u64 focus_bonus_ns = 3000000ULL;
+/* Burst threshold multiplier in the focused app: 2 x 8 ms is about a frame. */
+const volatile u32 focus_thresh_mult = 2;
 const volatile u32 bg_factor_pct = 50;
 
 /* Written by the loader; zero ids are unused slots. */

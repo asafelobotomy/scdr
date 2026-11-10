@@ -49,10 +49,18 @@ static bool classify_batch(struct task_struct *p, struct task_ctx *tctx)
 		return true;
 	if (p->flags & PF_KTHREAD)
 		return false;
-	bool favoured = is_favoured(p) || tctx->fclass == FC_FOCUS;
+	bool favoured = is_favoured(p);
 
+	/*
+	 * An explicit scdr hint gets hint_thresh_mult. The focused app only
+	 * gets focus_thresh_mult: agents run their tools (tests, compilers,
+	 * VMs) inside the app's own scope, and those hogs must not compete
+	 * with its UI as if they were it.
+	 */
 	if (favoured)
 		thresh *= hint_thresh_mult;
+	else if (tctx->fclass == FC_FOCUS)
+		thresh *= focus_thresh_mult;
 	/* Hysteresis: leave batch only once bursts fall well below threshold. */
 	if (tctx->batch)
 		thresh /= 2;
@@ -186,7 +194,8 @@ void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 
 	/* Expected burst pushes the deadline out: short runners go first. */
 	deadline = vruntime + scale_inv(min64(tctx->avg_burst, lag_ns), weight);
-	deadline = focus_deadline(fc, deadline);
+	if (!tctx->batch)
+		deadline = focus_deadline(fc, deadline);
 
 	if (tctx->batch) {
 		if (!scx_bpf_dsq_nr_queued(BATCH_DSQ))
@@ -361,7 +370,8 @@ void BPF_STRUCT_OPS(devbox_exit, struct scx_exit_info *ei)
 void BPF_STRUCT_OPS(devbox_tick, struct task_struct *p)
 {
 	struct task_ctx *tctx = lookup_tctx(p);
-	bool hinted = has_latency_hint(p) || (tctx && tctx->fclass == FC_FOCUS);
+	bool hinted = has_latency_hint(p) ||
+		      (tctx && tctx->fclass == FC_FOCUS && !tctx->batch);
 
 	perf_tick(scx_bpf_task_cpu(p), hinted, bpf_ktime_get_ns());
 }
