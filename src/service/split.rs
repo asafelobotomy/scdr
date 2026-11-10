@@ -36,6 +36,9 @@ pub(super) struct SplitState {
     /// Tools slices seen: their cgroup, and the limits last set on them.
     /// Kept after they empty, so stopping scdr still undoes the limits.
     slices: std::collections::BTreeMap<UnitId, (String, SliceLimits)>,
+    /// Each slice cgroup's inode (its id for devbox) when the hints were
+    /// last written; a slice made again gets a new one.
+    slice_ids: HashMap<String, u64>,
 }
 
 /// Whether a cgroup is in an agent app's tools slice.
@@ -129,6 +132,11 @@ impl Service {
                 if let Some(cg) = pids.iter().find_map(|&p| ProcInfo::read(p).ok()).map(|i| i.cgroup) {
                     self.note_tools_slice(&cg);
                 }
+                // Moved: they're in a tools scope now, which is never split
+                // again, and a pid freed later may be reused in the app.
+                for p in &pids {
+                    self.split.members.remove(p);
+                }
                 self.reevaluate(pids);
             }
             // It exited before the move: nothing to retry.
@@ -190,8 +198,15 @@ impl Service {
                 dry_run: self.dry_run,
             });
         }
+        let inode = std::fs::metadata(format!("/sys/fs/cgroup{slice_cg}")).map(|m| std::os::unix::fs::MetadataExt::ino(&m)).ok();
+        let moved = inode.is_some() && self.split.slice_ids.get(&slice_cg).copied() != inode;
+        if let Some(ino) = inode {
+            self.split.slice_ids.insert(slice_cg.clone(), ino);
+        }
         self.split.slices.insert(id, (slice_cg, want));
-        if new {
+        if new || moved {
+            // Same text, new cgroup id: devbox must read it again.
+            self.hints_written = None;
             self.write_hints();
         }
     }

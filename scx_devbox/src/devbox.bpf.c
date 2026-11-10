@@ -245,6 +245,13 @@ void BPF_STRUCT_OPS(devbox_running, struct task_struct *p)
 	if (!tctx)
 		return;
 	tctx->run_at = bpf_ktime_get_ns();
+	/*
+	 * Wakeups sent straight to an idle CPU skip enqueue, where the class
+	 * is otherwise refreshed; tick's frequency floor and the wait stats
+	 * read it, so bring it up to date with the hints here (cached per
+	 * hints generation: one compare).
+	 */
+	focus_class(p, tctx);
 	note_running(tctx, tctx->run_at);
 	perf_running(scx_bpf_task_cpu(p), tctx->run_at);
 	if (tctx->batch) {

@@ -79,6 +79,7 @@ impl Service {
             return;
         }
         self.restore_all();
+        self.drop_hints();
         self.paused = true;
         tracing::info!("paused");
         self.save_runtime();
@@ -92,6 +93,8 @@ impl Service {
         tracing::info!("resumed");
         self.save_runtime();
         self.apply_system();
+        // Hints first, so the rescan doesn't renice what devbox handles.
+        self.sync_devbox();
         self.rescan();
     }
 
@@ -100,6 +103,7 @@ impl Service {
         if changed {
             tracing::info!("{role} role {}", if enabled { "on" } else { "off" });
             self.save_runtime();
+            self.write_hints();
             self.rescan();
         }
     }

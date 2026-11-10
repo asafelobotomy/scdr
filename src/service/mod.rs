@@ -283,7 +283,11 @@ impl Service {
     }
 
     pub fn reload(&mut self, config: Config) {
+        let split_off = self.config.split.enabled && !config.split.enabled;
         self.config = config;
+        if split_off {
+            self.restore_split();
+        }
         self.apply_system();
         self.rescan();
     }
@@ -291,6 +295,7 @@ impl Service {
     /// Restores every process scdr changed, and the autogroup setting.
     pub fn shutdown(&mut self) {
         self.restore_all();
+        self.drop_hints();
         self.run_unit_jobs_now();
         self.save_ledger();
     }

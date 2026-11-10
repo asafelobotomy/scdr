@@ -116,6 +116,7 @@ impl Service {
         let before = self.config.roles.for_power(self.power_profile.as_deref());
         tracing::info!("power profile: {}", profile.as_deref().unwrap_or("unknown"));
         self.power_profile = profile;
+        self.write_hints();
         if self.config.roles.for_power(self.power_profile.as_deref()) != before {
             let affected = self.role_pids();
             self.reevaluate(affected);

@@ -8,6 +8,8 @@ After=dbus.service
 Type=dbus
 BusName=org.scdr.Daemon1
 ExecStart=/usr/bin/scdrd
+# Also after a crash: devbox mustn't keep favouring the last focused app.
+ExecStopPost=/usr/bin/rm -f /run/scdr/devbox-hints
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 # Exit 3: another priority daemon runs (see Conflicts=); retrying won't help.

@@ -19,6 +19,7 @@
 
 use super::Service;
 use super::roles::{app_slice, cgroup_pids};
+use crate::config::Role;
 use crate::system;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -94,6 +95,9 @@ fn keep_delegating(
 const SUPPORTED_API: &str = "1";
 pub const HINTS_FILE: &str = "devbox-hints";
 
+/// Samples kept for the widget (it gets State at least every 2 s).
+const SAMPLE_WINDOW: usize = 5;
+
 /// Whether scx_devbox is the running sched_ext scheduler and takes hints.
 fn devbox_takes_hints() -> bool {
     let running = system::sched_ext()
@@ -141,8 +145,26 @@ impl Service {
             .is_some_and(|ops| ops == "devbox");
         let text = if running { fs::read_to_string(STATS).unwrap_or_default() } else { String::new() };
         let (fresh, seq) = new_samples(&text, self.devbox_seq);
-        self.devbox_samples = fresh;
+        // The loader restarted: drop the old run's samples.
+        if seq < self.devbox_seq {
+            self.devbox_samples.clear();
+        }
+        // A short rolling window, not just this tick's: a policy step
+        // between two State updates (a power profile change) would
+        // otherwise replace samples the widget never saw. It skips the
+        // ones it has by sequence number.
+        self.devbox_samples.extend(fresh);
+        let excess = self.devbox_samples.len().saturating_sub(SAMPLE_WINDOW);
+        self.devbox_samples.drain(..excess);
         self.devbox_seq = seq;
+    }
+
+    /// Pausing or stopping: hand the roles back and remove the hints, so
+    /// devbox doesn't keep favouring the last focused app without scdr.
+    pub(super) fn drop_hints(&mut self) {
+        self.devbox_hints = false;
+        self.devbox_gone_since = None;
+        self.write_hints();
     }
 
     /// Whether the foreground and background roles are left to devbox.
@@ -161,15 +183,21 @@ impl Service {
             }
             return;
         }
+        // The roles devbox stands in for, as switched and for this power profile.
+        let roles = self.config.roles.for_power(self.power_profile.as_deref());
+        let wanted = |r: Role| self.role_enabled(r) && roles.get(r).is_some();
         let mut lines: Vec<String> = self
             .sessions
             .values()
+            .filter(|_| wanted(Role::Foreground))
             .filter_map(|s| s.foreground.as_ref().map(|(cg, _)| format!("focus {cg}")))
             .collect();
         lines.sort();
         lines.dedup();
-        for uid in self.session_uids() {
-            lines.push(format!("apps {}", app_slice(uid).trim_end_matches('/')));
+        if wanted(Role::Background) {
+            for uid in self.session_uids() {
+                lines.push(format!("apps {}", app_slice(uid).trim_end_matches('/')));
+            }
         }
         // Agent tools: work the user waits on, so neither boosted nor held back.
         lines.extend(self.tools_slice_cgroups().into_iter().map(|cg| format!("neutral {cg}")));
@@ -246,7 +274,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("scdr-hints-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(super::HINTS_FILE);
-        let mut svc = Service::new(Config::from_sources(Vec::new()).unwrap(), false);
+        let roles = "[profile.fg]\nnice = -1\n[profile.bg]\nnice = 5\n[roles]\nforeground = \"fg\"\nbackground = \"bg\"\n";
+        let config = Config::from_sources(vec![("r.toml".into(), roles.into())]).unwrap();
+        let mut svc = Service::new(config, false);
         svc.hints_path = Some(path.clone());
         svc.devbox_hints = true;
         svc.session(1000, ":1.5").foreground = Some(("/user.slice/x/app.slice/app-a-1.scope".into(), 42));
@@ -255,6 +285,12 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "focus /user.slice/x/app.slice/app-a-1.scope\n\
              apps /user.slice/user-1000.slice/user@1000.service/app.slice\n"
+        );
+        // The foreground role switched off: no focus hint either.
+        svc.set_role_enabled(crate::config::Role::Foreground, false);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "apps /user.slice/user-1000.slice/user@1000.service/app.slice\n"
         );
         // Off again: the file goes, so a devbox reading it falls back too.
         svc.devbox_hints = false;

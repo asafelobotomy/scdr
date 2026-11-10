@@ -212,13 +212,25 @@ static enum run_result run(const struct scx_devbox__rodata *cfg, int ncpu,
 	read_stats(skel, ncpu, prev);	/* samples count from here, not from load */
 	clock_gettime(CLOCK_MONOTONIC, &last);
 	while (!stop && !skel->bss->exit_kind) {
-		/* Wake for hint changes at once; count whole seconds for stats. */
-		if (hints_wait(&hints_fd, 1000))
-			hints_load(skel, verbose);
+		long long left_ms;
+
+		/*
+		 * Wake for hint changes at once, but take a stats sample every
+		 * whole second from the last one, so each covers one second
+		 * however often scdr's directory changes.
+		 */
 		clock_gettime(CLOCK_MONOTONIC, &now);
-		if (now.tv_sec == last.tv_sec)
+		left_ms = 1000 - ((now.tv_sec - last.tv_sec) * 1000LL +
+				  (now.tv_nsec - last.tv_nsec) / 1000000);
+		if (left_ms > 0) {
+			if (hints_wait(&hints_fd, (int)left_ms))
+				hints_load(skel, verbose);
 			continue;
-		last = now;
+		}
+		/* Next sample a second after this one was due; after a stall, from now. */
+		last.tv_sec += 1;
+		if (left_ms < -1000)
+			last = now;
 		/* scdr (re)started: watch its runtime directory again. */
 		if (hints_fd < 0 && (hints_fd = hints_watch()) >= 0)
 			hints_load(skel, verbose);

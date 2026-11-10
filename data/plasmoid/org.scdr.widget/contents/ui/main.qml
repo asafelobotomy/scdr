@@ -32,6 +32,9 @@ PlasmoidItem {
     property int historyRevision: 0
     property real lastSeq: 0
     property bool devboxSeen: false
+    // When the last scx_devbox sample arrived (ms); without samples the
+    // timer below keeps time instead.
+    property real lastSampleAt: 0
 
     function emptyHistory() {
         const h = {};
@@ -49,12 +52,13 @@ PlasmoidItem {
         }
     }
 
-    // Each State update carries the scx_devbox samples (one a second) that
-    // are new since scdrd's last tick, and the current pressure.
+    // Each State update carries scdrd's last few scx_devbox samples (one a
+    // second; those already recorded are skipped by sequence number), and
+    // the current pressure.
     function record(state) {
         let samples = state.devbox || [];
         // The loader restarted: its sequence starts again.
-        if (samples.length && samples[samples.length - 1].seq + 5 < lastSeq) {
+        if (samples.length && samples[samples.length - 1].seq < lastSeq) {
             lastSeq = 0;
         }
         samples = samples.filter(x => x.seq > lastSeq);
@@ -68,16 +72,41 @@ PlasmoidItem {
             push("perf", x.perf_pct);
             lastSeq = x.seq;
         }
-        if (samples.length) {
-            devboxSeen = true;
+        if (!samples.length) {
+            return;
         }
+        devboxSeen = true;
+        lastSampleAt = Date.now();
         // Pressure once per sample, so all graphs share one time scale.
-        for (let i = 0; i < Math.max(1, samples.length); i++) {
-            push("cpu", state.cpu_pressure);
-            push("memory", state.memory_pressure);
-            push("io", state.io_pressure);
+        for (let i = 0; i < samples.length; i++) {
+            pushPressure(state);
         }
         historyRevision++;
+    }
+
+    function pushPressure(state) {
+        push("cpu", state.cpu_pressure);
+        push("memory", state.memory_pressure);
+        push("io", state.io_pressure);
+    }
+
+    // No devbox samples (it isn't running): State only changes when a
+    // value does, so record pressure on a clock, one point a second, and
+    // keep devbox's graphs moving with zeros.
+    Timer {
+        interval: 1000
+        repeat: true
+        running: root.scdr !== null
+        onTriggered: {
+            if (Date.now() - root.lastSampleAt < 3000) {
+                return;
+            }
+            for (const k of ["wait_max", "wait_avg", "interactive", "batch", "damped", "preempt", "perf"]) {
+                root.push(k, 0);
+            }
+            root.pushPressure(root.scdr);
+            root.historyRevision++;
+        }
     }
 
     onScdrChanged: if (scdr) {
