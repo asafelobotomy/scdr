@@ -71,6 +71,9 @@ pub struct Status {
     #[serde(default)]
     pub cpufreq_driver: Option<(String, Option<String>)>,
     pub policy: Vec<String>,
+    /// Further facts and warnings, as (label, text) lines.
+    #[serde(default)]
+    pub notes: Vec<(String, String)>,
 }
 
 /// What the config says about `pid`, computed without daemon state.
@@ -357,6 +360,9 @@ impl fmt::Display for Status {
         writeln!(f, "uclamp    {uclamp}; governor {}", self.governors.join("/"))?;
         for d in &self.disks {
             writeln!(f, "disk      {} [{}{}]: {}", d.name, d.scheduler, if d.iocost { ", iocost" } else { "" }, d.lever())?;
+        }
+        for (label, text) in &self.notes {
+            writeln!(f, "{label:<9} {text}")?;
         }
         Ok(())
     }

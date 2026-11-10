@@ -7,7 +7,17 @@
 # 0, default slice. LAUNCH=scope inherits the caller's nice and slice, e.g.
 # scdr's foreground boost when run from the focused app's terminal: the case
 # of an agent spawning CPU hogs.
+#
+# Each round switches the whole machine's scheduler. Don't run it on a
+# desktop session you're using: switching schedulers under Electron apps
+# has tripped Claude Desktop's "webview unresponsive" watchdog and crashed
+# it. Use a spare session, or a VM (virtme-ng), and set I_KNOW=1.
 set -eu
+if [ "${I_KNOW:-}" != 1 ]; then
+	echo "abtest.sh swaps the machine's scheduler each round; close Electron apps (Claude Desktop" >&2
+	echo "crashed from it) or use a VM, then run it again with I_KNOW=1." >&2
+	exit 2
+fi
 SUDO=${SUDO:-run0}
 ROUNDS=${ROUNDS:-2}
 SECS=${SECS:-6}

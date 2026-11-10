@@ -125,6 +125,32 @@ impl Service {
             io_pressure: system::psi_some_avg10("io"),
             cpufreq_driver: system::cpufreq_driver(),
             policy: self.policy_report.clone(),
+            notes: self.status_notes(),
         }
+    }
+
+    fn status_notes(&self) -> Vec<(String, String)> {
+        let mut notes = Vec::new();
+        if let Some(m) = system::memory_facts() {
+            notes.push(("memory".into(), m));
+        }
+        let mut uids: Vec<u32> = self.sessions_report().iter().map(|s| s.uid).collect();
+        uids.sort_unstable();
+        uids.dedup();
+        for uid in uids {
+            if system::user_io_delegated(uid) == Some(false) {
+                notes.push((
+                    "io".into(),
+                    format!(
+                        "user@{uid}.service doesn't delegate io: IOWeight on that user's apps does nothing \
+                         until the next login (scdr's user@.service.d/50-scdr-io.conf)"
+                    ),
+                ));
+            }
+        }
+        for d in crate::rivals::overlapping(std::path::Path::new("/proc")) {
+            notes.push(("warning".into(), format!("{d} also boosts games and switches sched_ext schedulers")));
+        }
+        notes
     }
 }

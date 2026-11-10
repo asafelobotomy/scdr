@@ -65,6 +65,12 @@ async fn main() -> anyhow::Result<()> {
         );
         std::process::exit(3);
     }
+    for d in scdr::rivals::overlapping(std::path::Path::new("/proc")) {
+        tracing::warn!(
+            "{d} is running: it also boosts games and switches sched_ext schedulers. Leave one of them in \
+             charge of games and schedulers (scdr: turn off the game role and [sched_ext])"
+        );
+    }
     let paths = Paths {
         etc: args.etc_dir,
         share: args.share_dir,

@@ -68,6 +68,11 @@ rules, roles and pressure handling keep working underneath.
 
 ## Results
 
+**Don't A/B schedulers on a desktop you're using.** Each round switches the
+whole machine's scheduler, and doing that under Electron apps has crashed
+Claude Desktop (its "webview unresponsive" watchdog). Use a spare session or a
+VM; `abtest.sh` refuses to run without `I_KNOW=1`.
+
 `tools/abtest.sh` runs `tools/latbench.c` under each scheduler in alternating
 rounds, with 16 spinners: *sleep* is how late a thread sleeping 1 ms wakes,
 *spawn* is fork + exec + reap of `/bin/true` back to back (an agent's tool
@@ -99,7 +104,7 @@ Needs clang, bpftool, libbpf, and a kernel with sched_ext (6.12+).
 ```sh
 make
 sudo ./build/scx_devbox -i 2          # stats every 2 s; Ctrl-C to stop
-tools/abtest.sh eevdf ./build/scx_devbox  # A/B against EEVDF (stop the service first)
+I_KNOW=1 tools/abtest.sh eevdf ./build/scx_devbox  # A/B against EEVDF (stop the service first)
 ```
 
 Install as a service, either from scdr's Arch packaging (a split package:
