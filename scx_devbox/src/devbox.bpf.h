@@ -57,6 +57,7 @@ struct task_ctx {
 	u32 cgw_gen;	/* cgw_gen value cgw was computed under */
 	u32 fgen;	/* hints_gen + 1 that fclass was computed under */
 	u8 fclass;	/* focus class from scdr's hints (devbox.focus.h) */
+	u64 enq_at;	/* when it last became runnable or was queued; 0 = running */
 	bool batch;
 };
 
@@ -111,6 +112,33 @@ static __always_inline bool has_latency_hint(struct task_struct *p)
 static __always_inline bool is_favoured(struct task_struct *p)
 {
 	return p->static_prio < NICE_0_PRIO || has_latency_hint(p);
+}
+
+static __always_inline bool batch_preemptible(struct task_struct *p, u32 cpu,
+					      u64 now)
+{
+	u64 since = cpu_batch_since[CPU_IDX(cpu)];
+
+	/* Let a batch task keep at least batch_min_run_ns: no thrashing. */
+	return since && now - since >= batch_min_run_ns &&
+	       bpf_cpumask_test_cpu(cpu, p->cpus_ptr);
+}
+
+/* Find a CPU running a batch task that @p may run on, preferring @prefer. */
+static s32 find_batch_cpu(struct task_struct *p, s32 prefer)
+{
+	u64 now = bpf_ktime_get_ns();
+	u32 i;
+
+	if (prefer >= 0 && prefer < MAX_CPUS &&
+	    batch_preemptible(p, prefer, now))
+		return prefer;
+
+	for (i = 0; i < MAX_CPUS && i < nr_cpus; i++) {
+		if (batch_preemptible(p, i, now))
+			return i;
+	}
+	return -1;
 }
 
 #endif

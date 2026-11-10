@@ -42,6 +42,12 @@ pub struct WidgetState {
     pub roles: Vec<(String, String, bool)>,
     pub agents: usize,
     pub boosted: Vec<ProcessReport>,
+    /// Memory and io pressure (PSI "some" avg10), for the widget's graphs.
+    pub memory_pressure: Option<f64>,
+    pub io_pressure: Option<f64>,
+    /// scx_devbox samples (one a second) new since the last tick; the
+    /// widget keeps the history. Empty unless devbox runs.
+    pub devbox: Vec<super::devbox::DevboxSample>,
 }
 
 impl Service {
@@ -154,6 +160,9 @@ impl Service {
                 .collect(),
             agents: self.sessions.len(),
             boosted: self.process_reports(true),
+            memory_pressure: crate::system::psi_some_avg10("memory").map(f64::round),
+            io_pressure: crate::system::psi_some_avg10("io").map(f64::round),
+            devbox: self.devbox_samples.clone(),
         }
     }
 

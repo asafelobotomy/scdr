@@ -23,6 +23,67 @@ PlasmoidItem {
     readonly property bool paused: scdr !== null && scdr.paused
     property string lastError: ""
 
+    // Live graphs: three minutes of history, kept here so it keeps
+    // collecting while the popup is closed (see LiveGraphs.qml).
+    readonly property int historyLength: 180
+    readonly property var historyKeys: ["wait_max", "wait_avg", "interactive", "batch", "damped",
+                                        "preempt", "perf", "cpu", "memory", "io"]
+    property var history: emptyHistory()
+    property int historyRevision: 0
+    property real lastSeq: 0
+    property bool devboxSeen: false
+
+    function emptyHistory() {
+        const h = {};
+        for (const k of historyKeys) {
+            h[k] = new Array(historyLength).fill(0);
+        }
+        return h;
+    }
+
+    function push(key, value) {
+        const a = history[key];
+        a.push(Number(value) || 0);
+        if (a.length > historyLength) {
+            a.shift();
+        }
+    }
+
+    // Each State update carries the scx_devbox samples (one a second) that
+    // are new since scdrd's last tick, and the current pressure.
+    function record(state) {
+        let samples = state.devbox || [];
+        // The loader restarted: its sequence starts again.
+        if (samples.length && samples[samples.length - 1].seq + 5 < lastSeq) {
+            lastSeq = 0;
+        }
+        samples = samples.filter(x => x.seq > lastSeq);
+        for (const x of samples) {
+            push("wait_max", x.wait_max_ms);
+            push("wait_avg", x.wait_avg_ms);
+            push("interactive", x.interactive);
+            push("batch", x.batch);
+            push("damped", x.damped);
+            push("preempt", x.preempt);
+            push("perf", x.perf_pct);
+            lastSeq = x.seq;
+        }
+        if (samples.length) {
+            devboxSeen = true;
+        }
+        // Pressure once per sample, so all graphs share one time scale.
+        for (let i = 0; i < Math.max(1, samples.length); i++) {
+            push("cpu", state.cpu_pressure);
+            push("memory", state.memory_pressure);
+            push("io", state.io_pressure);
+        }
+        historyRevision++;
+    }
+
+    onScdrChanged: if (scdr) {
+        record(scdr);
+    }
+
     function parse(json) {
         if (!json) {
             return null;
@@ -109,8 +170,8 @@ PlasmoidItem {
     }
 
     fullRepresentation: PlasmaExtras.Representation {
-        Layout.minimumWidth: Kirigami.Units.gridUnit * 18
-        Layout.minimumHeight: Kirigami.Units.gridUnit * 16
+        Layout.minimumWidth: Kirigami.Units.gridUnit * 20
+        Layout.minimumHeight: Kirigami.Units.gridUnit * 34
         collapseMarginsHint: true
 
         header: PlasmaExtras.PlasmoidHeading {
@@ -204,6 +265,15 @@ PlasmoidItem {
                 opacity: 0.7
                 font: Kirigami.Theme.smallFont
                 text: i18n("No session agent: focus, audio and game roles need systemctl --user enable --now scdr-session")
+            }
+
+            Kirigami.Heading { level: 5; text: i18n("Live"); Layout.topMargin: Kirigami.Units.smallSpacing }
+            LiveGraphs {
+                Layout.fillWidth: true
+                hist: root.history
+                revision: root.historyRevision
+                length: root.historyLength
+                devbox: root.devboxSeen
             }
 
             Kirigami.Heading { level: 5; text: i18n("Boosted now"); Layout.topMargin: Kirigami.Units.smallSpacing }

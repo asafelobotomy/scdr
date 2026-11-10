@@ -19,10 +19,52 @@
 use super::Service;
 use super::roles::{app_slice, cgroup_pids};
 use crate::system;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
 const API: &str = "/run/scx_devbox/api";
+const STATS: &str = "/run/scx_devbox/stats";
+
+/// One second of scx_devbox's scheduling, from its stats file.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DevboxSample {
+    pub seq: u64,
+    pub time: i64,
+    /// Enqueues per second: interactive, batch, of focused tasks, and of
+    /// unfocused apps' tasks damped under contention.
+    pub interactive: u64,
+    pub batch: u64,
+    pub focus: u64,
+    pub damped: u64,
+    /// Batch tasks preempted for interactive wakeups; starvation rescues.
+    pub preempt: u64,
+    pub rescue: u64,
+    /// Mean CPU frequency target, percent.
+    pub perf_pct: u32,
+    /// How long focused tasks waited from queued to running, ms.
+    pub wait_max_ms: f64,
+    pub wait_avg_ms: f64,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct StatsFile {
+    samples: Vec<DevboxSample>,
+}
+
+/// Samples in @text newer than @last_seq (all of them if the loader
+/// restarted and its sequence went back), and the newest seq seen.
+fn new_samples(text: &str, last_seq: u64) -> (Vec<DevboxSample>, u64) {
+    let Ok(file) = serde_json::from_str::<StatsFile>(text) else {
+        return (Vec::new(), last_seq);
+    };
+    let newest = file.samples.iter().map(|s| s.seq).max().unwrap_or(0);
+    let from = if newest < last_seq { 0 } else { last_seq };
+    let fresh: Vec<DevboxSample> = file.samples.into_iter().filter(|s| s.seq > from).collect();
+    (fresh, newest.max(if newest < last_seq { 0 } else { last_seq }))
+}
 
 /// How long devbox may be gone before scdr takes the roles back. Restarting
 /// it (a package upgrade) takes a second or two; taking over for that window
@@ -87,6 +129,19 @@ impl Service {
             self.reevaluate(pids);
         }
         self.write_hints();
+        self.read_devbox_stats();
+    }
+
+    /// The samples devbox wrote since the last tick, for the widget.
+    fn read_devbox_stats(&mut self) {
+        let running = system::sched_ext()
+            .filter(system::SchedExt::is_active)
+            .and_then(|s| s.ops)
+            .is_some_and(|ops| ops == "devbox");
+        let text = if running { fs::read_to_string(STATS).unwrap_or_default() } else { String::new() };
+        let (fresh, seq) = new_samples(&text, self.devbox_seq);
+        self.devbox_samples = fresh;
+        self.devbox_seq = seq;
     }
 
     /// Whether the foreground and background roles are left to devbox.
@@ -142,6 +197,25 @@ fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::config::Config;
+
+    #[test]
+    fn stats_samples_are_taken_once() {
+        let file = |seqs: &[u64]| {
+            let s: Vec<String> = seqs.iter().map(|q| format!(r#"{{"seq":{q},"wait_max_ms":1.5}}"#)).collect();
+            format!(r#"{{"samples":[{}]}}"#, s.join(","))
+        };
+        let (got, seq) = super::new_samples(&file(&[1, 2, 3]), 0);
+        assert_eq!((got.len(), seq), (3, 3));
+        assert_eq!(got[0].wait_max_ms, 1.5);
+        // Next tick: only what's new.
+        let (got, seq) = super::new_samples(&file(&[2, 3, 4, 5]), seq);
+        assert_eq!(got.iter().map(|s| s.seq).collect::<Vec<_>>(), vec![4, 5]);
+        // The loader restarted: its sequence starts again.
+        let (got, seq) = super::new_samples(&file(&[1, 2]), seq);
+        assert_eq!((got.len(), seq), (2, 2));
+        // Unreadable or missing: nothing, and the position is kept.
+        assert_eq!(super::new_samples("", 7), (Vec::new(), 7));
+    }
 
     #[test]
     fn a_devbox_restart_doesnt_hand_the_roles_back() {

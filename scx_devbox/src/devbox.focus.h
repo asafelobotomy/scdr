@@ -39,6 +39,35 @@ u64 apps_cgid[MAX_HINTS];
 u32 apps_level[MAX_HINTS];
 u32 hints_gen;
 
+/*
+ * How long focused tasks wait between being queued (or woken) and running:
+ * the latency the user feels. Worst and total since the loader last read
+ * them; it resets them every second for the stats file (stats.h).
+ */
+u64 focus_wait_max_ns, focus_wait_sum_ns, focus_wait_cnt;
+
+static __always_inline void note_queued(struct task_ctx *tctx, u64 now)
+{
+	if (!tctx->enq_at)
+		tctx->enq_at = now;
+}
+
+static __always_inline void note_running(struct task_ctx *tctx, u64 now)
+{
+	u64 w;
+
+	if (!tctx->enq_at)
+		return;
+	w = now - tctx->enq_at;
+	tctx->enq_at = 0;
+	if (tctx->fclass != FC_FOCUS)
+		return;
+	if (w > focus_wait_max_ns)
+		focus_wait_max_ns = w;	/* racy max: fine for a graph */
+	__sync_fetch_and_add(&focus_wait_sum_ns, w);
+	__sync_fetch_and_add(&focus_wait_cnt, 1);
+}
+
 /* Whether @cg is the cgroup @id (at @level) or below it. */
 static __always_inline bool cg_under(struct cgroup *cg, u64 id, u32 level)
 {

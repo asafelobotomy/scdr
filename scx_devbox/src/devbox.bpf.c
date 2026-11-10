@@ -86,33 +86,6 @@ static u64 task_slice(struct task_struct *p, bool batch)
 	return max64(s, slice_min_ns);
 }
 
-static __always_inline bool batch_preemptible(struct task_struct *p, u32 cpu,
-					      u64 now)
-{
-	u64 since = cpu_batch_since[CPU_IDX(cpu)];
-
-	/* Let a batch task keep at least batch_min_run_ns: no thrashing. */
-	return since && now - since >= batch_min_run_ns &&
-	       bpf_cpumask_test_cpu(cpu, p->cpus_ptr);
-}
-
-/* Find a CPU running a batch task that @p may run on, preferring @prefer. */
-static s32 find_batch_cpu(struct task_struct *p, s32 prefer)
-{
-	u64 now = bpf_ktime_get_ns();
-	u32 i;
-
-	if (prefer >= 0 && prefer < MAX_CPUS &&
-	    batch_preemptible(p, prefer, now))
-		return prefer;
-
-	for (i = 0; i < MAX_CPUS && i < nr_cpus; i++) {
-		if (batch_preemptible(p, i, now))
-			return i;
-	}
-	return -1;
-}
-
 s32 BPF_STRUCT_OPS(devbox_select_cpu, struct task_struct *p, s32 prev_cpu,
 		   u64 wake_flags)
 {
@@ -136,6 +109,8 @@ s32 BPF_STRUCT_OPS(devbox_select_cpu, struct task_struct *p, s32 prev_cpu,
 		tctx = lookup_tctx(p);
 		bool batch = tctx ? tctx->batch : false;
 
+		if (tctx)
+			note_queued(tctx, bpf_ktime_get_ns());
 		scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL, task_slice(p, batch), 0);
 		stat_inc(DST_DIRECT_IDLE);
 	}
@@ -167,6 +142,7 @@ void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 		return;
 	}
 
+	note_queued(tctx, bpf_ktime_get_ns());
 	fc = focus_class(p, tctx);
 	was_batch = tctx->batch;
 	tctx->batch = classify_batch(p, tctx);
@@ -269,6 +245,7 @@ void BPF_STRUCT_OPS(devbox_running, struct task_struct *p)
 	if (!tctx)
 		return;
 	tctx->run_at = bpf_ktime_get_ns();
+	note_running(tctx, tctx->run_at);
 	perf_running(scx_bpf_task_cpu(p), tctx->run_at);
 	if (tctx->batch) {
 		if (vtime_before(vtime_now[BATCH_DSQ], tctx->vruntime))

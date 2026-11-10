@@ -22,6 +22,7 @@ typedef __s64 s64;
 #include "devbox.h"
 #include "devbox.bpf.skel.h"
 #include "hints.h"
+#include "stats.h"
 
 #define SCX_EXIT_UNREG 64
 #define SCX_EXIT_SYSRQ 67
@@ -29,22 +30,6 @@ typedef __s64 s64;
 
 static volatile sig_atomic_t stop;
 static bool verbose;
-
-static const char *stat_names[DEVBOX_NR_STATS] = {
-	[DST_DIRECT_IDLE]   = "direct_idle",
-	[DST_KTHREAD]       = "kthread",
-	[DST_INTERACTIVE]   = "interactive",
-	[DST_BATCH]         = "batch",
-	[DST_HINTED]        = "scdr_hint",
-	[DST_PREEMPT_KICK]  = "preempt_batch",
-	[DST_IDLE_KICK]     = "idle_kick",
-	[DST_STARVE_RESCUE] = "starve_rescue",
-	[DST_HINT_DEMOTED]  = "hint_demoted",
-	[DST_CGROUP_WEIGHTED] = "cgroup_weighted",
-	[DST_PERF_SET]      = "perf_set",
-	[DST_FOCUS]         = "focus",
-	[DST_BG_DAMPED]     = "bg_damped",
-};
 
 static void usage(const char *prog)
 {
@@ -94,21 +79,6 @@ static unsigned long long parse_ull(const char *s, const char *what)
 		exit(2);
 	}
 	return v;
-}
-
-static void read_stats(struct scx_devbox *skel, int ncpu,
-		       unsigned long long out[DEVBOX_NR_STATS])
-{
-	unsigned long long vals[ncpu];
-	int fd = bpf_map__fd(skel->maps.stats);
-
-	for (__u32 i = 0; i < DEVBOX_NR_STATS; i++) {
-		out[i] = 0;
-		if (bpf_map_lookup_elem(fd, &i, vals))
-			continue;
-		for (int c = 0; c < ncpu; c++)
-			out[i] += vals[c];
-	}
 }
 
 /* Reads /sys/kernel/sched_ext/<name> into buf; false if unreadable. */
@@ -198,7 +168,7 @@ static long long read_hotplug_seq(void)
 static enum run_result run(const struct scx_devbox__rodata *cfg, int ncpu,
 			   unsigned int stats_secs)
 {
-	unsigned long long prev[DEVBOX_NR_STATS] = { 0 }, cur[DEVBOX_NR_STATS];
+	unsigned long long prev[DEVBOX_NR_STATS] = { 0 };
 	unsigned int ticks = 0;
 	struct scx_devbox *skel;
 	struct timespec last, now;
@@ -239,6 +209,7 @@ static enum run_result run(const struct scx_devbox__rodata *cfg, int ncpu,
 	hints_announce();
 	hints_fd = hints_watch();
 	hints_load(skel, verbose);
+	read_stats(skel, ncpu, prev);	/* samples count from here, not from load */
 	clock_gettime(CLOCK_MONOTONIC, &last);
 	while (!stop && !skel->bss->exit_kind) {
 		/* Wake for hint changes at once; count whole seconds for stats. */
@@ -251,31 +222,15 @@ static enum run_result run(const struct scx_devbox__rodata *cfg, int ncpu,
 		/* scdr (re)started: watch its runtime directory again. */
 		if (hints_fd < 0 && (hints_fd = hints_watch()) >= 0)
 			hints_load(skel, verbose);
-		if (!stats_secs || ++ticks % stats_secs)
-			continue;
-		read_stats(skel, ncpu, cur);
-		for (int i = 0; i < DEVBOX_NR_STATS; i++) {
-			printf("%s=%llu ", stat_names[i], cur[i] - prev[i]);
-			prev[i] = cur[i];
-		}
-		/* Mean frequency target over CPUs that have one, of 1024. */
-		{
-			unsigned long long sum = 0, n = 0;
-
-			for (int c = 0; c < ncpu && c < 512; c++) {
-				if (skel->bss->cpu_perf[c].perf) {
-					sum += skel->bss->cpu_perf[c].perf;
-					n++;
-				}
-			}
-			printf("perf_avg=%llu/1024\n", n ? sum / n : 1024);
-		}
-		fflush(stdout);
+		stats_tick(skel, ncpu, prev);
+		if (stats_secs && ++ticks % stats_secs == 0)
+			stats_print(stats_secs);
 	}
 
 	if (hints_fd >= 0)
 		close(hints_fd);
 	unlink(HINTS_API);
+	unlink(STATS_FILE);
 	bpf_link__destroy(link);
 
 	kind = skel->bss->exit_kind;

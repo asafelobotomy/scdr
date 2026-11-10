@@ -146,6 +146,9 @@ pub struct Service {
     devbox_hints: bool,
     /// When devbox stopped taking hints, while within the grace period.
     devbox_gone_since: Option<std::time::Instant>,
+    /// scx_devbox stats samples new this tick, and the last seq taken.
+    devbox_samples: Vec<devbox::DevboxSample>,
+    devbox_seq: u64,
     hints_written: Option<String>,
 }
 
@@ -176,6 +179,8 @@ impl Service {
             hints_path: None,
             devbox_hints: false,
             devbox_gone_since: None,
+            devbox_samples: Vec::new(),
+            devbox_seq: 0,
             hints_written: None,
         }
     }
