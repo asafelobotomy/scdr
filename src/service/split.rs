@@ -242,7 +242,8 @@ impl Service {
 
     /// The binary of the app a scope belongs to: its main process's, which
     /// a scope name ending in a pid names (`app-foo-1234.scope`), else the
-    /// scope's oldest process.
+    /// scope's oldest process by start time (uQ's scopes end in a random
+    /// number, and pids wrap).
     fn app_exe(&mut self, unit: &str, scope_cg: &str) -> Option<String> {
         if let Some((_, exe)) = self.split.app_exe.get(unit) {
             return exe.clone();
@@ -253,7 +254,13 @@ impl Service {
             .next()
             .and_then(|t| t.parse::<u32>().ok())
             .filter(|&p| ProcInfo::read(p).is_ok_and(|i| i.cgroup == scope_cg));
-        let main = named.or_else(|| scope_pids(scope_cg).into_iter().min());
+        let main = named.or_else(|| {
+            scope_pids(scope_cg)
+                .into_iter()
+                .filter_map(|p| procfs::Stat::read(p).ok().map(|s| (s.start_time, p)))
+                .min()
+                .map(|(_, p)| p)
+        });
         let exe = main.and_then(|p| ProcInfo::read(p).ok()).and_then(|i| i.exe);
         self.split.app_exe.insert(unit.to_owned(), (scope_cg.to_owned(), exe.clone()));
         exe
