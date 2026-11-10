@@ -67,6 +67,10 @@ benchmark. Packaged for the AUR (`packaging/aur`).
   low-end machines doing development with LLM agent apps. It reads scdr's
   profiles from each task (`sched = "batch"`, `slice_us`, `nice`), so builds
   and indexers wait while the desktop and short agent tool calls go first.
+  While it runs, scdr hands it the focused app and your `app.slice` as hints
+  (`/run/scdr/devbox-hints`) and its foreground and background roles step
+  aside: a focus change is one file write instead of renicing every thread
+  of two apps and two systemctl calls. They come back if devbox stops.
   Packaged separately as `scx-devbox` by the same PKGBUILD; not started
   unless you enable it (`systemctl enable --now scx_devbox`).
 - Restores everything on `systemctl stop scdrd`: threads, unit weights,

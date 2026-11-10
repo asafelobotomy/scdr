@@ -55,6 +55,8 @@ struct task_ctx {
 	u64 run_at;	/* when it last started running */
 	u32 cgw;	/* cached cgroup factor, CGW_ONE = 1.0 (see devbox.cgroup.h) */
 	u32 cgw_gen;	/* cgw_gen value cgw was computed under */
+	u32 fgen;	/* hints_gen + 1 that fclass was computed under */
+	u8 fclass;	/* focus class from scdr's hints (devbox.focus.h) */
 	bool batch;
 };
 

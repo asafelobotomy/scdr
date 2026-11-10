@@ -126,6 +126,7 @@ void BPF_STRUCT_OPS(devbox_cgroup_move, struct task_struct *p,
 		return;
 	tctx->cgw = cgrp_factor(to);
 	tctx->cgw_gen = cgw_gen;
+	tctx->fgen = 0;	/* focus class depends on the cgroup too */
 }
 
 #endif

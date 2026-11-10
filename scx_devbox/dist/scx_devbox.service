@@ -15,6 +15,10 @@ ExecStart=@BINDIR@/scx_devbox
 Restart=on-failure
 RestartSec=5
 Nice=-5
+# /run/scx_devbox/api tells scdr this loader takes focus hints, which scdr
+# writes to /run/scdr/devbox-hints (see src/hints.h).
+RuntimeDirectory=scx_devbox
+RuntimeDirectoryMode=0755
 
 [Install]
 WantedBy=multi-user.target

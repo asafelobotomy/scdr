@@ -21,6 +21,7 @@ typedef __s64 s64;
 #include <bpf/libbpf.h>
 #include "devbox.h"
 #include "devbox.bpf.skel.h"
+#include "hints.h"
 
 #define SCX_EXIT_UNREG 64
 #define SCX_EXIT_SYSRQ 67
@@ -41,6 +42,8 @@ static const char *stat_names[DEVBOX_NR_STATS] = {
 	[DST_HINT_DEMOTED]  = "hint_demoted",
 	[DST_CGROUP_WEIGHTED] = "cgroup_weighted",
 	[DST_PERF_SET]      = "perf_set",
+	[DST_FOCUS]         = "focus",
+	[DST_BG_DAMPED]     = "bg_damped",
 };
 
 static void usage(const char *prog)
@@ -198,6 +201,8 @@ static enum run_result run(const struct scx_devbox__rodata *cfg, int ncpu,
 	unsigned long long prev[DEVBOX_NR_STATS] = { 0 }, cur[DEVBOX_NR_STATS];
 	unsigned int ticks = 0;
 	struct scx_devbox *skel;
+	struct timespec last, now;
+	int hints_fd;
 	struct bpf_link *link;
 	enum run_result ret = RUN_STOPPED;
 	s32 kind;
@@ -231,8 +236,21 @@ static enum run_result run(const struct scx_devbox__rodata *cfg, int ncpu,
 	       (unsigned long long)cfg->batch_thresh_ns / 1000);
 	fflush(stdout);
 
+	hints_announce();
+	hints_fd = hints_watch();
+	hints_load(skel, verbose);
+	clock_gettime(CLOCK_MONOTONIC, &last);
 	while (!stop && !skel->bss->exit_kind) {
-		sleep(1);
+		/* Wake for hint changes at once; count whole seconds for stats. */
+		if (hints_wait(&hints_fd, 1000))
+			hints_load(skel, verbose);
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		if (now.tv_sec == last.tv_sec)
+			continue;
+		last = now;
+		/* scdr (re)started: watch its runtime directory again. */
+		if (hints_fd < 0 && (hints_fd = hints_watch()) >= 0)
+			hints_load(skel, verbose);
 		if (!stats_secs || ++ticks % stats_secs)
 			continue;
 		read_stats(skel, ncpu, cur);
@@ -255,6 +273,9 @@ static enum run_result run(const struct scx_devbox__rodata *cfg, int ncpu,
 		fflush(stdout);
 	}
 
+	if (hints_fd >= 0)
+		close(hints_fd);
+	unlink(HINTS_API);
 	bpf_link__destroy(link);
 
 	kind = skel->bss->exit_kind;

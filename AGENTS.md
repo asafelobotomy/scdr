@@ -27,5 +27,7 @@ Process scheduling and priority daemon (`scdrd`) and control tool (`scdrctl`) fo
 - scdrd exits 3 (no restart) while ananicy-cpp or system76-scheduler runs (`src/rivals.rs`); `--dry-run` skips the check.
 - The session agent follows logind's `LockedHint` (`src/agent/lock.rs`) and sends `SetForeground(0)` while locked, so nothing stays boosted behind the lock screen.
 
+- With scx_devbox running and announcing `/run/scx_devbox/api`, scdrd writes focus hints to `/run/scdr/devbox-hints` and its foreground/background roles step aside (`src/service/devbox.rs`, `scx_devbox/src/hints.h`, `devbox.focus.h`).
+
 ## uQ integration
 - uQ's units run in `session.slice`, and its `base.lua` restarts `scdr-session` with the session's environment. bindle's `scdr` module imports ananicy rules before removing ananicy, then enables `scdrd`; `scdr-sched-ext` turns on `[sched_ext]` through `/etc/scdr/rules.d/40-bindle-sched-ext.toml`.

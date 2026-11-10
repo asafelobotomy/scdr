@@ -29,6 +29,7 @@ loads sched_ext schedulers with a GPL-compatible license.
 | **cgroup weights** | `cpu.weight` is honoured. Each cgroup keeps a flattened factor (product of weight/100 down from the root, fixed point); a task is charged vruntime and deadline at nice weight × cgroup factor, clamped to 1–10000, so weight 1 is deprioritised but never starved. |
 | **Per-CPU kthreads** | Dispatched straight to their CPU. |
 | **Idle CPU pick** | The kernel default: SMT-aware, prefers the previous CPU, keeps migrations low. |
+| **Focus (scdr hints)** | scdr writes the focused app's cgroup and each user's `app.slice` to `/run/scdr/devbox-hints`; the loader turns them into cgroup ids in the scheduler's memory. Focused tasks are shielded from batch demotion, sorted ahead by 3 ms and get the frequency floor. Unfocused apps are weighted to 50% only while the CPUs are contended. A focus change is one file write. |
 | **CPU frequency** | Under the schedutil governor, sets each CPU's frequency target from its measured utilisation (10 ms windows, fast rise, slow decay, 25% headroom, scaled to the CPU's capacity), with a 75% floor for scdr latency-hinted tasks. The kernel's default without this is maximum on every busy CPU. Drivers that choose frequencies themselves (intel_pstate active, amd-pstate active) ignore it. `-F` turns it off. |
 | **Idle CPU pick** (kfunc) | `scx_bpf_select_cpu_and()`, falling back to the deprecated `scx_bpf_select_cpu_dfl()` on kernels without it. |
 | **CPU hotplug** | Handled, so suspend/resume and CPUs going offline don't unload it. If the kernel unloads it anyway, the loader restarts it in place when the kernel asks, or exits non-zero so systemd does. |
@@ -44,6 +45,7 @@ changes and your scdr rules keep meaning the same thing:
 | `slice_us` (`audio`, `compositor`, `foreground`, `game`) | used as the task's slice; needs 4× the burst to be demoted to batch |
 | `nice` < 0 (`desktop`, `compositor`, …) | needs 4× the burst to be demoted to batch |
 | `nice` (any) | weights vruntime: nice 15 accrues it much faster |
+| focus and `app.slice` (session agent) | sent as hints (above); scdr's foreground and background roles then step aside, and come back if devbox stops |
 | `cpu_weight` (`CPUWeight=` on units: compositor/audio 400, focused app 300, desktop 200, background 50, `background.slice` 30, baloo 1) | honoured: multiplies the task's weight, so a weight-400 unit accrues vruntime 4x slower than a default one |
 
 Tasks no rule covers are classified by behaviour: an average run burst between
@@ -138,4 +140,5 @@ Stats: `direct_idle` (woke onto an idle CPU), `interactive` / `batch`
 `preempt_batch`, `idle_kick`, `starve_rescue`, `hint_demoted` (enqueues of a
 favoured task demoted to batch as a hog), `cgroup_weighted` (enqueues of
 tasks in a cgroup whose factor is not 1.0), `perf_set` (frequency targets
-sent) and `perf_avg` (mean target over CPUs, of 1024).
+sent), `focus` / `bg_damped` (enqueues of focused tasks / of unfocused apps' tasks
+under contention) and `perf_avg` (mean target over CPUs, of 1024).

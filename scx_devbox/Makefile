@@ -31,7 +31,7 @@ $(BUILD)/devbox.bpf.o: src/devbox.bpf.c src/devbox.bpf.h src/devbox.cgroup.h src
 $(BUILD)/devbox.bpf.skel.h: $(BUILD)/devbox.bpf.o
 	$(BPFTOOL) gen skeleton $< name scx_devbox > $@
 
-$(BUILD)/scx_devbox: src/devbox.c src/devbox.h $(BUILD)/devbox.bpf.skel.h
+$(BUILD)/scx_devbox: src/devbox.c $(wildcard src/*.h) $(BUILD)/devbox.bpf.skel.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -I$(BUILD) -Isrc $< -o $@ $(LDFLAGS) -lbpf -lelf -lz
 
 install: $(BUILD)/scx_devbox

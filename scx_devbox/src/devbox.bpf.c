@@ -36,6 +36,7 @@
 #include "devbox.bpf.h"
 #include "devbox.cgroup.h"
 #include "devbox.perf.h"
+#include "devbox.focus.h"
 
 char _license[] SEC("license") = "GPL";
 
@@ -48,13 +49,15 @@ static bool classify_batch(struct task_struct *p, struct task_ctx *tctx)
 		return true;
 	if (p->flags & PF_KTHREAD)
 		return false;
-	if (is_favoured(p))
+	bool favoured = is_favoured(p) || tctx->fclass == FC_FOCUS;
+
+	if (favoured)
 		thresh *= hint_thresh_mult;
 	/* Hysteresis: leave batch only once bursts fall well below threshold. */
 	if (tctx->batch)
 		thresh /= 2;
 	batch = tctx->avg_burst > thresh;
-	if (batch && is_favoured(p))
+	if (batch && favoured)
 		stat_inc(DST_HINT_DEMOTED);
 	return batch;
 }
@@ -138,6 +141,7 @@ void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 	u32 weight;
 	bool was_batch;
 	s32 cpu;
+	u8 fc;
 
 	/*
 	 * Per-CPU kthreads (kworkers, ksoftirqd, ...) can only run here and
@@ -155,6 +159,7 @@ void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 		return;
 	}
 
+	fc = focus_class(p, tctx);
 	was_batch = tctx->batch;
 	tctx->batch = classify_batch(p, tctx);
 	if (has_latency_hint(p))
@@ -175,12 +180,13 @@ void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 		vruntime = clock - lag_ns;
 	tctx->vruntime = vruntime;
 
-	weight = eff_weight(p, tctx);
+	weight = focus_weight(fc, eff_weight(p, tctx), true);
 	if (tctx->cgw != CGW_ONE)
 		stat_inc(DST_CGROUP_WEIGHTED);
 
 	/* Expected burst pushes the deadline out: short runners go first. */
 	deadline = vruntime + scale_inv(min64(tctx->avg_burst, lag_ns), weight);
+	deadline = focus_deadline(fc, deadline);
 
 	if (tctx->batch) {
 		if (!scx_bpf_dsq_nr_queued(BATCH_DSQ))
@@ -278,7 +284,7 @@ void BPF_STRUCT_OPS(devbox_stopping, struct task_struct *p, bool runnable)
 		return;
 
 	used = bpf_ktime_get_ns() - tctx->run_at;
-	tctx->vruntime += scale_inv(used, eff_weight(p, tctx));
+	tctx->vruntime += scale_inv(used, focus_weight(tctx->fclass, eff_weight(p, tctx), false));
 	tctx->burst = min64(tctx->burst + used,
 			    4 * hint_thresh_mult * batch_thresh_ns);
 
@@ -354,7 +360,10 @@ void BPF_STRUCT_OPS(devbox_exit, struct scx_exit_info *ei)
 
 void BPF_STRUCT_OPS(devbox_tick, struct task_struct *p)
 {
-	perf_tick(scx_bpf_task_cpu(p), p, bpf_ktime_get_ns());
+	struct task_ctx *tctx = lookup_tctx(p);
+	bool hinted = has_latency_hint(p) || (tctx && tctx->fclass == FC_FOCUS);
+
+	perf_tick(scx_bpf_task_cpu(p), hinted, bpf_ktime_get_ns());
 }
 
 SEC(".struct_ops.link")

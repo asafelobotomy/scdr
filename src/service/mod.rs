@@ -1,6 +1,7 @@
 //! Daemon state: which processes exist, what applies to them, and why.
 
 mod control;
+mod devbox;
 mod inherit;
 mod knobs;
 mod ledger;
@@ -12,6 +13,7 @@ mod transition;
 mod unit_jobs;
 
 pub use control::{ProcessReport, WidgetState};
+pub use devbox::HINTS_FILE as DEVBOX_HINTS_FILE;
 pub use pressure::cpu_some_avg10;
 pub use roles::SessionReport;
 pub use unit_jobs::{UnitDone, UnitJob, spawn_worker as spawn_unit_worker};
@@ -139,6 +141,10 @@ pub struct Service {
     /// Where the crash-recovery ledger lives (see `ledger`); `None` disables it.
     pub ledger_path: Option<std::path::PathBuf>,
     ledger_written: Option<String>,
+    /// Where focus hints for scx_devbox go (see `devbox`); `None` disables them.
+    pub hints_path: Option<std::path::PathBuf>,
+    devbox_hints: bool,
+    hints_written: Option<String>,
 }
 
 impl Service {
@@ -165,6 +171,9 @@ impl Service {
             self_pid: std::process::id(),
             ledger_path: None,
             ledger_written: None,
+            hints_path: None,
+            devbox_hints: false,
+            hints_written: None,
         }
     }
 

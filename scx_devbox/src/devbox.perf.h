@@ -15,7 +15,8 @@
  * decays slowly, gets 25% headroom, and is scaled to the CPU's own capacity,
  * because the target is on the system-wide scale (a little core asking for
  * 1024 would pin itself at top speed). A task with an scdr latency hint
- * (foreground, audio, compositor) gets at least perf_floor_hinted. A new
+ * (foreground, audio, compositor) or in the focused app gets at least
+ * perf_floor_hinted. A new
  * target is only sent when it moves by more than PERF_STEP.
  */
 #ifndef __DEVBOX_PERF_H
@@ -51,7 +52,7 @@ static __always_inline void perf_stopping(s32 cpu, u64 now)
 }
 
 /* From the tick of the task running on @cpu: close the window if it's due. */
-static __always_inline void perf_tick(s32 cpu, struct task_struct *p, u64 now)
+static __always_inline void perf_tick(s32 cpu, bool hinted, u64 now)
 {
 	struct cpu_perf *c = &cpu_perf[CPU_IDX(cpu)];
 	u64 elapsed, busy, now_util;
@@ -78,7 +79,7 @@ static __always_inline void perf_tick(s32 cpu, struct task_struct *p, u64 now)
 	c->win_start = now;
 
 	target = min64((u64)c->util * 5 / 4, SCX_CPUPERF_ONE);
-	if (has_latency_hint(p) && target < perf_floor_hinted)
+	if (hinted && target < perf_floor_hinted)
 		target = perf_floor_hinted;
 	target = (u64)target * scx_bpf_cpuperf_cap(cpu) / SCX_CPUPERF_ONE;
 

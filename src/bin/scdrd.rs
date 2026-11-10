@@ -88,6 +88,11 @@ async fn main() -> anyhow::Result<()> {
     service.ledger_path = std::env::var_os("RUNTIME_DIRECTORY")
         .map(|d| std::path::PathBuf::from(d).join("ledger.json"))
         .filter(|_| !args.once);
+    // Focus hints for scx_devbox go next to it (see service::devbox).
+    service.hints_path = service
+        .ledger_path
+        .as_ref()
+        .map(|p| p.with_file_name(scdr::service::DEVBOX_HINTS_FILE));
 
     if args.once {
         service.startup();
@@ -305,8 +310,13 @@ async fn policy_step(policy: &mut Policy, bus: Option<&zbus::Connection>, servic
         let power = svc.power_profile().map(str::to_owned);
         (svc.config.sched_ext.clone(), svc.config.eevdf.clone(), power, svc.gaming())
     };
-    let report = policy.sync(bus, &sched_ext, &eevdf, power.as_deref(), gaming).await;
-    service.lock().unwrap().policy_report = report;
+    let mut report = policy.sync(bus, &sched_ext, &eevdf, power.as_deref(), gaming).await;
+    let mut svc = service.lock().unwrap();
+    svc.sync_devbox();
+    if svc.devbox_hints() {
+        report.push("devbox: focus hints on; foreground and background roles run in the scheduler".into());
+    }
+    svc.policy_report = report;
 }
 
 async fn power_profiles(
