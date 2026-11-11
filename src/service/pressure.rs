@@ -31,6 +31,10 @@ impl Service {
             "CPU pressure {avg10:.1}%: background role {}",
             if active { "on" } else { "off" }
         );
+        // devbox damps unfocused apps itself, by contention, not this average.
+        if self.devbox_hints {
+            return;
+        }
         let mut uids: Vec<u32> = self.sessions.values().map(|s| s.uid).collect();
         uids.sort_unstable();
         uids.dedup();

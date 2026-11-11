@@ -35,6 +35,8 @@
 #include "devbox.h"
 #include "devbox.bpf.h"
 #include "devbox.cgroup.h"
+#include "devbox.perf.h"
+#include "devbox.focus.h"
 
 char _license[] SEC("license") = "GPL";
 
@@ -47,13 +49,23 @@ static bool classify_batch(struct task_struct *p, struct task_ctx *tctx)
 		return true;
 	if (p->flags & PF_KTHREAD)
 		return false;
-	if (is_favoured(p))
+	bool favoured = is_favoured(p);
+
+	/*
+	 * An explicit scdr hint gets hint_thresh_mult. The focused app only
+	 * gets focus_thresh_mult: agents run their tools (tests, compilers,
+	 * VMs) inside the app's own scope, and those hogs must not compete
+	 * with its UI as if they were it.
+	 */
+	if (favoured)
 		thresh *= hint_thresh_mult;
+	else if (tctx->fclass == FC_FOCUS)
+		thresh *= focus_thresh_mult;
 	/* Hysteresis: leave batch only once bursts fall well below threshold. */
 	if (tctx->batch)
 		thresh /= 2;
 	batch = tctx->avg_burst > thresh;
-	if (batch && is_favoured(p))
+	if (batch && favoured)
 		stat_inc(DST_HINT_DEMOTED);
 	return batch;
 }
@@ -74,33 +86,6 @@ static u64 task_slice(struct task_struct *p, bool batch)
 	return max64(s, slice_min_ns);
 }
 
-static __always_inline bool batch_preemptible(struct task_struct *p, u32 cpu,
-					      u64 now)
-{
-	u64 since = cpu_batch_since[CPU_IDX(cpu)];
-
-	/* Let a batch task keep at least batch_min_run_ns: no thrashing. */
-	return since && now - since >= batch_min_run_ns &&
-	       bpf_cpumask_test_cpu(cpu, p->cpus_ptr);
-}
-
-/* Find a CPU running a batch task that @p may run on, preferring @prefer. */
-static s32 find_batch_cpu(struct task_struct *p, s32 prefer)
-{
-	u64 now = bpf_ktime_get_ns();
-	u32 i;
-
-	if (prefer >= 0 && prefer < MAX_CPUS &&
-	    batch_preemptible(p, prefer, now))
-		return prefer;
-
-	for (i = 0; i < MAX_CPUS && i < nr_cpus; i++) {
-		if (batch_preemptible(p, i, now))
-			return i;
-	}
-	return -1;
-}
-
 s32 BPF_STRUCT_OPS(devbox_select_cpu, struct task_struct *p, s32 prev_cpu,
 		   u64 wake_flags)
 {
@@ -108,11 +93,24 @@ s32 BPF_STRUCT_OPS(devbox_select_cpu, struct task_struct *p, s32 prev_cpu,
 	bool is_idle = false;
 	s32 cpu;
 
-	cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &is_idle);
+	/*
+	 * scx_bpf_select_cpu_dfl() is deprecated upstream in favour of
+	 * scx_bpf_select_cpu_and(); keep the old call for kernels without it.
+	 */
+	if (bpf_ksym_exists(scx_bpf_select_cpu_and)) {
+		cpu = scx_bpf_select_cpu_and(p, prev_cpu, wake_flags, p->cpus_ptr, 0);
+		is_idle = cpu >= 0;
+		if (!is_idle)
+			cpu = prev_cpu;
+	} else {
+		cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &is_idle);
+	}
 	if (is_idle) {
 		tctx = lookup_tctx(p);
 		bool batch = tctx ? tctx->batch : false;
 
+		if (tctx)
+			note_queued(tctx, bpf_ktime_get_ns());
 		scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL, task_slice(p, batch), 0);
 		stat_inc(DST_DIRECT_IDLE);
 	}
@@ -126,6 +124,7 @@ void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 	u32 weight;
 	bool was_batch;
 	s32 cpu;
+	u8 fc;
 
 	/*
 	 * Per-CPU kthreads (kworkers, ksoftirqd, ...) can only run here and
@@ -143,6 +142,8 @@ void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 		return;
 	}
 
+	note_queued(tctx, bpf_ktime_get_ns());
+	fc = focus_class(p, tctx);
 	was_batch = tctx->batch;
 	tctx->batch = classify_batch(p, tctx);
 	if (has_latency_hint(p))
@@ -163,12 +164,14 @@ void BPF_STRUCT_OPS(devbox_enqueue, struct task_struct *p, u64 enq_flags)
 		vruntime = clock - lag_ns;
 	tctx->vruntime = vruntime;
 
-	weight = eff_weight(p, tctx);
+	weight = focus_weight(fc, eff_weight(p, tctx), true);
 	if (tctx->cgw != CGW_ONE)
 		stat_inc(DST_CGROUP_WEIGHTED);
 
 	/* Expected burst pushes the deadline out: short runners go first. */
 	deadline = vruntime + scale_inv(min64(tctx->avg_burst, lag_ns), weight);
+	if (!tctx->batch)
+		deadline = focus_deadline(fc, deadline);
 
 	if (tctx->batch) {
 		if (!scx_bpf_dsq_nr_queued(BATCH_DSQ))
@@ -242,6 +245,15 @@ void BPF_STRUCT_OPS(devbox_running, struct task_struct *p)
 	if (!tctx)
 		return;
 	tctx->run_at = bpf_ktime_get_ns();
+	/*
+	 * Wakeups sent straight to an idle CPU skip enqueue, where the class
+	 * is otherwise refreshed; tick's frequency floor and the wait stats
+	 * read it, so bring it up to date with the hints here (cached per
+	 * hints generation: one compare).
+	 */
+	focus_class(p, tctx);
+	note_running(tctx, tctx->run_at);
+	perf_running(scx_bpf_task_cpu(p), tctx->run_at);
 	if (tctx->batch) {
 		if (vtime_before(vtime_now[BATCH_DSQ], tctx->vruntime))
 			vtime_now[BATCH_DSQ] = tctx->vruntime;
@@ -260,11 +272,12 @@ void BPF_STRUCT_OPS(devbox_stopping, struct task_struct *p, bool runnable)
 	u64 used;
 
 	cpu_batch_since[CPU_IDX(scx_bpf_task_cpu(p))] = 0;
+	perf_stopping(scx_bpf_task_cpu(p), bpf_ktime_get_ns());
 	if (!tctx)
 		return;
 
 	used = bpf_ktime_get_ns() - tctx->run_at;
-	tctx->vruntime += scale_inv(used, eff_weight(p, tctx));
+	tctx->vruntime += scale_inv(used, focus_weight(tctx->fclass, eff_weight(p, tctx), false));
 	tctx->burst = min64(tctx->burst + used,
 			    4 * hint_thresh_mult * batch_thresh_ns);
 
@@ -338,6 +351,15 @@ void BPF_STRUCT_OPS(devbox_exit, struct scx_exit_info *ei)
 	exit_kind = ei->kind;
 }
 
+void BPF_STRUCT_OPS(devbox_tick, struct task_struct *p)
+{
+	struct task_ctx *tctx = lookup_tctx(p);
+	bool hinted = has_latency_hint(p) ||
+		      (tctx && tctx->fclass == FC_FOCUS && !tctx->batch);
+
+	perf_tick(scx_bpf_task_cpu(p), hinted, bpf_ktime_get_ns());
+}
+
 SEC(".struct_ops.link")
 struct sched_ext_ops devbox_ops = {
 	.select_cpu	= (void *)devbox_select_cpu,
@@ -345,6 +367,7 @@ struct sched_ext_ops devbox_ops = {
 	.dispatch	= (void *)devbox_dispatch,
 	.running	= (void *)devbox_running,
 	.stopping	= (void *)devbox_stopping,
+	.tick		= (void *)devbox_tick,
 	.quiescent	= (void *)devbox_quiescent,
 	.enable		= (void *)devbox_enable,
 	.init_task	= (void *)devbox_init_task,

@@ -42,6 +42,12 @@ pub struct WidgetState {
     pub roles: Vec<(String, String, bool)>,
     pub agents: usize,
     pub boosted: Vec<ProcessReport>,
+    /// Memory and io pressure (PSI "some" avg10), for the widget's graphs.
+    pub memory_pressure: Option<f64>,
+    pub io_pressure: Option<f64>,
+    /// scx_devbox samples (one a second) new since the last tick; the
+    /// widget keeps the history. Empty unless devbox runs.
+    pub devbox: Vec<super::devbox::DevboxSample>,
 }
 
 impl Service {
@@ -59,6 +65,7 @@ impl Service {
         }
         tracing::info!("restored {reverted} processes");
         self.restore_units();
+        self.restore_split();
         self.restore_system();
     }
 
@@ -72,6 +79,7 @@ impl Service {
             return;
         }
         self.restore_all();
+        self.drop_hints();
         self.paused = true;
         tracing::info!("paused");
         self.save_runtime();
@@ -85,6 +93,8 @@ impl Service {
         tracing::info!("resumed");
         self.save_runtime();
         self.apply_system();
+        // Hints first, so the rescan doesn't renice what devbox handles.
+        self.sync_devbox();
         self.rescan();
     }
 
@@ -93,6 +103,7 @@ impl Service {
         if changed {
             tracing::info!("{role} role {}", if enabled { "on" } else { "off" });
             self.save_runtime();
+            self.write_hints();
             self.rescan();
         }
     }
@@ -154,6 +165,9 @@ impl Service {
                 .collect(),
             agents: self.sessions.len(),
             boosted: self.process_reports(true),
+            memory_pressure: crate::system::psi_some_avg10("memory").map(f64::round),
+            io_pressure: crate::system::psi_some_avg10("io").map(f64::round),
+            devbox: self.devbox_samples.clone(),
         }
     }
 

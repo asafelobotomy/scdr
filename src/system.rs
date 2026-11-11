@@ -97,6 +97,34 @@ pub fn uclamp_effective() -> bool {
 
 const IOCOST_QOS: &str = "/sys/fs/cgroup/io.cost.qos";
 
+/// Whether `uid`'s user manager hands the io controller to its units;
+/// without it, `IOWeight=` on apps is accepted and does nothing. `None`
+/// when that manager isn't running.
+pub fn user_io_delegated(uid: u32) -> Option<bool> {
+    let path = format!("/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service/cgroup.subtree_control");
+    fs::read_to_string(path).ok().map(|s| s.split_ascii_whitespace().any(|c| c == "io"))
+}
+
+/// Kernel memory-management settings that shape how the desktop feels
+/// under memory pressure, as one line for `status`.
+pub fn memory_facts() -> Option<String> {
+    let read = |p: &str| fs::read_to_string(p).ok().map(|s| s.trim().to_owned());
+    let mut parts = Vec::new();
+    if let Some(mask) = read("/sys/kernel/mm/lru_gen/enabled") {
+        let on = u32::from_str_radix(mask.trim_start_matches("0x"), 16).is_ok_and(|m| m != 0);
+        let ttl = read("/sys/kernel/mm/lru_gen/min_ttl_ms").unwrap_or_else(|| "?".into());
+        parts.push(if on { format!("MGLRU on, working set kept {ttl} ms") } else { "MGLRU off".into() });
+    }
+    let thp = |f: &str| read(&format!("/sys/kernel/mm/transparent_hugepage/{f}")).and_then(|s| active_io_scheduler(&s));
+    if let (Some(en), Some(defrag)) = (thp("enabled"), thp("defrag")) {
+        parts.push(format!("THP {en}, defrag {defrag}"));
+    }
+    if let Some(sw) = read("/proc/sys/vm/swappiness") {
+        parts.push(format!("swappiness {sw}"));
+    }
+    (!parts.is_empty()).then(|| parts.join("; "))
+}
+
 /// A whole block device and which I/O priority levers it honours.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Disk {

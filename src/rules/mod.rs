@@ -13,10 +13,10 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
-struct Matcher(GlobSet);
+pub(crate) struct Matcher(GlobSet);
 
 impl Matcher {
-    fn compile(patterns: &[String]) -> Result<Self, String> {
+    pub(crate) fn compile(patterns: &[String]) -> Result<Self, String> {
         let mut b = GlobSetBuilder::new();
         for p in patterns {
             let glob = GlobBuilder::new(p)
@@ -29,11 +29,11 @@ impl Matcher {
         b.build().map(Matcher).map_err(|e| e.to_string())
     }
 
-    fn is_match(&self, s: &str) -> bool {
+    pub(crate) fn is_match(&self, s: &str) -> bool {
         self.0.is_match(s)
     }
 
-    fn any(&self, items: &[&str]) -> bool {
+    pub(crate) fn any(&self, items: &[&str]) -> bool {
         items.iter().any(|s| self.is_match(s))
     }
 }

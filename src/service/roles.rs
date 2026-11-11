@@ -53,6 +53,11 @@ impl Service {
         let first = !self.sessions.values().any(|s| s.uid == uid && s.foreground.is_some());
         let session = self.session(uid, sender);
         let old = std::mem::replace(&mut session.foreground, new.clone());
+        // With devbox handling focus, telling it is all there is to do.
+        if self.devbox_hints {
+            self.write_hints();
+            return Ok(());
+        }
         let mut affected = Vec::new();
         // (Only once a focused app is known: focus on a desktop window
         // places nothing, so re-checking every app then is wasted work.)
@@ -95,6 +100,7 @@ impl Service {
             return;
         };
         tracing::info!("session agent {sender} (uid {}) went away", s.uid);
+        self.write_hints();
         let mut affected: Vec<u32> = s.audio.into_keys().chain(s.games.into_keys()).collect();
         if let Some((cgroup, _)) = s.foreground {
             affected.extend(cgroup_pids(&cgroup));
@@ -110,6 +116,7 @@ impl Service {
         let before = self.config.roles.for_power(self.power_profile.as_deref());
         tracing::info!("power profile: {}", profile.as_deref().unwrap_or("unknown"));
         self.power_profile = profile;
+        self.write_hints();
         if self.config.roles.for_power(self.power_profile.as_deref()) != before {
             let affected = self.role_pids();
             self.reevaluate(affected);
@@ -141,12 +148,16 @@ impl Service {
             match role {
                 Role::Game => sessions.iter().any(|s| s.games.get(&info.pid) == Some(&info.start_time)),
                 Role::Audio => sessions.iter().any(|s| s.audio.get(&info.pid) == Some(&info.start_time)),
-                Role::Foreground => focused,
-                // Never the focused app, even with the foreground role off.
+                // Left to scx_devbox while it takes hints (see `devbox`).
+                Role::Foreground => focused && !self.devbox_hints,
+                // Never the focused app, even with the foreground role off,
+                // nor agent tools (work the user is waiting on).
                 Role::Background => {
-                    self.pressure_active
+                    !self.devbox_hints
+                        && self.pressure_active
                         && !focused
                         && info.cgroup.starts_with(&app_slice(info.uid))
+                        && !super::split::in_tools_slice(&info.cgroup)
                 }
             }
         };
@@ -180,13 +191,13 @@ impl Service {
         out
     }
 
-    fn session(&mut self, uid: u32, sender: &str) -> &mut Session {
+    pub(super) fn session(&mut self, uid: u32, sender: &str) -> &mut Session {
         self.sessions
             .entry(sender.to_owned())
             .or_insert_with(|| Session { uid, ..Default::default() })
     }
 
-    fn role_pids(&self) -> Vec<u32> {
+    pub(super) fn role_pids(&self) -> Vec<u32> {
         let mut pids = Vec::new();
         for s in self.sessions.values() {
             pids.extend(s.audio.keys().chain(s.games.keys()));

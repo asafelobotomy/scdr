@@ -3,11 +3,11 @@
 - `scdr-git/` builds the latest `main` from GitHub.
 - `scdr/` builds a tagged release (`v$pkgver` on GitHub).
 
-`scdr-git` is a split package that also builds `scx-devbox-git`, the
-sched_ext scheduler in `scx_devbox/` (needs a sched_ext kernel to build).
-`scdr/` stays daemon-only until a release tag contains `scx_devbox/`; then
-split it the same way as `packaging/arch/PKGBUILD`. Copy `scx-devbox.install`
-along with `scdr.install` when publishing.
+Both are split packages that also build scx-devbox (`scx-devbox` from `scdr`,
+`scx-devbox-git` from `scdr-git`), the sched_ext scheduler in `scx_devbox/`;
+it needs a sched_ext kernel to build. Copy `scx-devbox.install` along with
+`scdr.install` when publishing. bindle's `scdr-devbox` module installs
+`scx-devbox`, so it needs the next release of `scdr` on the AUR.
 
 Both install through `packaging/install.sh` from the source tree, the same as
 the local `packaging/arch/PKGBUILD`.

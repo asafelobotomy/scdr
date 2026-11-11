@@ -29,6 +29,9 @@ loads sched_ext schedulers with a GPL-compatible license.
 | **cgroup weights** | `cpu.weight` is honoured. Each cgroup keeps a flattened factor (product of weight/100 down from the root, fixed point); a task is charged vruntime and deadline at nice weight × cgroup factor, clamped to 1–10000, so weight 1 is deprioritised but never starved. |
 | **Per-CPU kthreads** | Dispatched straight to their CPU. |
 | **Idle CPU pick** | The kernel default: SMT-aware, prefers the previous CPU, keeps migrations low. |
+| **Focus (scdr hints)** | scdr writes the focused app's cgroup and each user's `app.slice` to `/run/scdr/devbox-hints`; the loader turns them into cgroup ids in the scheduler's memory. Focused tasks are shielded from batch demotion, sorted ahead by 3 ms and get the frequency floor. Unfocused apps are weighted to 50% only while the CPUs are contended. An agent app's tools slice (scdr's `[split]`) is sent as neutral: it gets neither. A focus change is one file write. |
+| **CPU frequency** | Under the schedutil governor, sets each CPU's frequency target from its measured utilisation (10 ms windows, fast rise, slow decay, 25% headroom, scaled to the CPU's capacity), with a 75% floor for scdr latency-hinted tasks. The kernel's default without this is maximum on every busy CPU. Drivers that choose frequencies themselves (intel_pstate active, amd-pstate active) ignore it. `-F` turns it off. |
+| **Idle CPU pick** (kfunc) | `scx_bpf_select_cpu_and()`, falling back to the deprecated `scx_bpf_select_cpu_dfl()` on kernels without it. |
 | **CPU hotplug** | Handled, so suspend/resume and CPUs going offline don't unload it. If the kernel unloads it anyway, the loader restarts it in place when the kernel asks, or exits non-zero so systemd does. |
 
 ### How scdr drives it
@@ -42,6 +45,7 @@ changes and your scdr rules keep meaning the same thing:
 | `slice_us` (`audio`, `compositor`, `foreground`, `game`) | used as the task's slice; needs 4× the burst to be demoted to batch |
 | `nice` < 0 (`desktop`, `compositor`, …) | needs 4× the burst to be demoted to batch |
 | `nice` (any) | weights vruntime: nice 15 accrues it much faster |
+| focus and `app.slice` (session agent) | sent as hints (above); scdr's foreground and background roles then step aside, and come back if devbox stops |
 | `cpu_weight` (`CPUWeight=` on units: compositor/audio 400, focused app 300, desktop 200, background 50, `background.slice` 30, baloo 1) | honoured: multiplies the task's weight, so a weight-400 unit accrues vruntime 4x slower than a default one |
 
 Tasks no rule covers are classified by behaviour: an average run burst between
@@ -63,6 +67,11 @@ the stock schedulers. Leave it off (the default) while scx_devbox runs; scdr's
 rules, roles and pressure handling keep working underneath.
 
 ## Results
+
+**Don't A/B schedulers on a desktop you're using.** Each round switches the
+whole machine's scheduler, and doing that under Electron apps has crashed
+Claude Desktop (its "webview unresponsive" watchdog). Use a spare session or a
+VM; `abtest.sh` refuses to run without `I_KNOW=1`.
 
 `tools/abtest.sh` runs `tools/latbench.c` under each scheduler in alternating
 rounds, with 16 spinners: *sleep* is how late a thread sleeping 1 ms wakes,
@@ -95,7 +104,7 @@ Needs clang, bpftool, libbpf, and a kernel with sched_ext (6.12+).
 ```sh
 make
 sudo ./build/scx_devbox -i 2          # stats every 2 s; Ctrl-C to stop
-tools/abtest.sh eevdf ./build/scx_devbox  # A/B against EEVDF (stop the service first)
+I_KNOW=1 tools/abtest.sh eevdf ./build/scx_devbox  # A/B against EEVDF (stop the service first)
 ```
 
 Install as a service, either from scdr's Arch packaging (a split package:
@@ -128,10 +137,13 @@ system is already back on EEVDF; the unit retries 3 times and then stays there.
 | `-p, --batch-min-run-us` | 1000 | least run time before a batch task can be preempted |
 | `-l, --lag-us` | 20000 | most sleep credit a waking task gets |
 | `-n, --no-preempt` | | never preempt batch for interactive wakeups |
+| `-F, --no-cpufreq` | | leave CPU frequency targets at the kernel default (maximum) |
 | `-i, --stats` | 0 | print counters every N seconds |
 
 Stats: `direct_idle` (woke onto an idle CPU), `interactive` / `batch`
 (enqueues per DSQ), `scdr_hint` (enqueues carrying an scdr slice),
 `preempt_batch`, `idle_kick`, `starve_rescue`, `hint_demoted` (enqueues of a
 favoured task demoted to batch as a hog), `cgroup_weighted` (enqueues of
-tasks in a cgroup whose factor is not 1.0).
+tasks in a cgroup whose factor is not 1.0), `perf_set` (frequency targets
+sent), `focus` / `bg_damped` (enqueues of focused tasks / of unfocused apps' tasks
+under contention) and `perf_avg` (mean target over CPUs, of 1024).

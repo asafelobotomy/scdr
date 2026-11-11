@@ -21,6 +21,8 @@ typedef __s64 s64;
 #include <bpf/libbpf.h>
 #include "devbox.h"
 #include "devbox.bpf.skel.h"
+#include "hints.h"
+#include "stats.h"
 
 #define SCX_EXIT_UNREG 64
 #define SCX_EXIT_SYSRQ 67
@@ -28,19 +30,6 @@ typedef __s64 s64;
 
 static volatile sig_atomic_t stop;
 static bool verbose;
-
-static const char *stat_names[DEVBOX_NR_STATS] = {
-	[DST_DIRECT_IDLE]   = "direct_idle",
-	[DST_KTHREAD]       = "kthread",
-	[DST_INTERACTIVE]   = "interactive",
-	[DST_BATCH]         = "batch",
-	[DST_HINTED]        = "scdr_hint",
-	[DST_PREEMPT_KICK]  = "preempt_batch",
-	[DST_IDLE_KICK]     = "idle_kick",
-	[DST_STARVE_RESCUE] = "starve_rescue",
-	[DST_HINT_DEMOTED]  = "hint_demoted",
-	[DST_CGROUP_WEIGHTED] = "cgroup_weighted",
-};
 
 static void usage(const char *prog)
 {
@@ -61,6 +50,8 @@ static void usage(const char *prog)
 "  -p, --batch-min-run-us N  batch runs this long before it can be preempted\n"
 "                            (default 1000)\n"
 "  -n, --no-preempt          don't preempt batch tasks for interactive wakeups\n"
+"  -F, --no-cpufreq          leave CPU frequency targets alone (the kernel keeps\n"
+"                            them at maximum; only matters under schedutil)\n"
 "  -i, --stats SECS          print stats every SECS seconds (0 = off, default 0)\n"
 "  -v, --verbose             libbpf debug output\n"
 "  -h, --help\n", prog);
@@ -90,46 +81,54 @@ static unsigned long long parse_ull(const char *s, const char *what)
 	return v;
 }
 
-static void read_stats(struct scx_devbox *skel, int ncpu,
-		       unsigned long long out[DEVBOX_NR_STATS])
+/* Reads /sys/kernel/sched_ext/<name> into buf; false if unreadable. */
+static bool read_scx(const char *name, char *buf, size_t len)
 {
-	unsigned long long vals[ncpu];
-	int fd = bpf_map__fd(skel->maps.stats);
+	char path[64];
+	FILE *f;
+	bool ok;
 
-	for (__u32 i = 0; i < DEVBOX_NR_STATS; i++) {
-		out[i] = 0;
-		if (bpf_map_lookup_elem(fd, &i, vals))
-			continue;
-		for (int c = 0; c < ncpu; c++)
-			out[i] += vals[c];
-	}
+	snprintf(path, sizeof(path), "/sys/kernel/sched_ext/%s", name);
+	f = fopen(path, "r");
+	if (!f)
+		return false;
+	ok = fgets(buf, len, f) != NULL;
+	fclose(f);
+	if (ok)
+		buf[strcspn(buf, "\n")] = 0;
+	return ok;
 }
+
+/*
+ * Another scheduler may hold sched_ext for a moment: scx_loader starts its
+ * default at boot and scdr stops it a few seconds later, and scdr puts it
+ * back while it restarts. Wait for it to go rather than fail straight away.
+ */
+#define BUSY_WAIT_SECS 30
 
 static void check_sched_ext_state(void)
 {
-	char buf[32] = "";
-	FILE *f = fopen("/sys/kernel/sched_ext/state", "r");
+	char state[32] = "", ops[64] = "?";
 
-	if (!f) {
+	if (!read_scx("state", state, sizeof(state))) {
 		fprintf(stderr, "this kernel has no sched_ext "
 			"(/sys/kernel/sched_ext missing)\n");
 		exit(1);
 	}
-	if (fgets(buf, sizeof(buf), f) && strncmp(buf, "disabled", 8)) {
-		char ops[64] = "?";
-		FILE *o = fopen("/sys/kernel/sched_ext/root/ops", "r");
-
-		if (o) {
-			if (fgets(ops, sizeof(ops), o))
-				ops[strcspn(ops, "\n")] = 0;
-			fclose(o);
+	for (int i = 0; strcmp(state, "disabled"); i++) {
+		if (i == 0) {
+			read_scx("root/ops", ops, sizeof(ops));
+			fprintf(stderr, "another sched_ext scheduler is running (%s); "
+				"waiting up to %ds for it to stop\n", ops, BUSY_WAIT_SECS);
 		}
-		fprintf(stderr, "another sched_ext scheduler is running (%s); "
-			"stop it first (scxctl stop)\n", ops);
-		fclose(f);
-		exit(1);
+		if (i >= BUSY_WAIT_SECS || stop) {
+			fprintf(stderr, "%s is still running; stop it first (scxctl stop)\n", ops);
+			exit(1);
+		}
+		sleep(1);
+		if (!read_scx("state", state, sizeof(state)))
+			exit(1);
 	}
-	fclose(f);
 }
 
 enum run_result { RUN_STOPPED, RUN_FAILED, RUN_RESTART };
@@ -169,9 +168,11 @@ static long long read_hotplug_seq(void)
 static enum run_result run(const struct scx_devbox__rodata *cfg, int ncpu,
 			   unsigned int stats_secs)
 {
-	unsigned long long prev[DEVBOX_NR_STATS] = { 0 }, cur[DEVBOX_NR_STATS];
+	unsigned long long prev[DEVBOX_NR_STATS] = { 0 };
 	unsigned int ticks = 0;
 	struct scx_devbox *skel;
+	struct timespec last, now;
+	int hints_fd;
 	struct bpf_link *link;
 	enum run_result ret = RUN_STOPPED;
 	s32 kind;
@@ -205,19 +206,43 @@ static enum run_result run(const struct scx_devbox__rodata *cfg, int ncpu,
 	       (unsigned long long)cfg->batch_thresh_ns / 1000);
 	fflush(stdout);
 
+	hints_announce();
+	hints_fd = hints_watch();
+	hints_load(skel, verbose);
+	read_stats(skel, ncpu, prev);	/* samples count from here, not from load */
+	clock_gettime(CLOCK_MONOTONIC, &last);
 	while (!stop && !skel->bss->exit_kind) {
-		sleep(1);
-		if (!stats_secs || ++ticks % stats_secs)
+		long long left_ms;
+
+		/*
+		 * Wake for hint changes at once, but take a stats sample every
+		 * whole second from the last one, so each covers one second
+		 * however often scdr's directory changes.
+		 */
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		left_ms = 1000 - ((now.tv_sec - last.tv_sec) * 1000LL +
+				  (now.tv_nsec - last.tv_nsec) / 1000000);
+		if (left_ms > 0) {
+			if (hints_wait(&hints_fd, (int)left_ms))
+				hints_load(skel, verbose);
 			continue;
-		read_stats(skel, ncpu, cur);
-		for (int i = 0; i < DEVBOX_NR_STATS; i++) {
-			printf("%s=%llu%s", stat_names[i], cur[i] - prev[i],
-			       i == DEVBOX_NR_STATS - 1 ? "\n" : " ");
-			prev[i] = cur[i];
 		}
-		fflush(stdout);
+		/* Next sample a second after this one was due; after a stall, from now. */
+		last.tv_sec += 1;
+		if (left_ms < -1000)
+			last = now;
+		/* scdr (re)started: watch its runtime directory again. */
+		if (hints_fd < 0 && (hints_fd = hints_watch()) >= 0)
+			hints_load(skel, verbose);
+		stats_tick(skel, ncpu, prev);
+		if (stats_secs && ++ticks % stats_secs == 0)
+			stats_print(stats_secs);
 	}
 
+	if (hints_fd >= 0)
+		close(hints_fd);
+	unlink(HINTS_API);
+	unlink(STATS_FILE);
 	bpf_link__destroy(link);
 
 	kind = skel->bss->exit_kind;
@@ -248,6 +273,7 @@ int main(int argc, char **argv)
 		{ "lag-us",            required_argument, 0, 'l' },
 		{ "batch-min-run-us",  required_argument, 0, 'p' },
 		{ "no-preempt",        no_argument,       0, 'n' },
+		{ "no-cpufreq",        no_argument,       0, 'F' },
 		{ "stats",             required_argument, 0, 'i' },
 		{ "verbose",           no_argument,       0, 'v' },
 		{ "help",              no_argument,       0, 'h' },
@@ -270,7 +296,7 @@ int main(int argc, char **argv)
 	cfg = *skel->rodata;
 	scx_devbox__destroy(skel);
 
-	while ((opt = getopt_long(argc, argv, "s:m:b:t:H:w:l:p:ni:vh", opts,
+	while ((opt = getopt_long(argc, argv, "s:m:b:t:H:w:l:p:nFi:vh", opts,
 				  NULL)) != -1) {
 		switch (opt) {
 		case 's': cfg.slice_ns = parse_ull(optarg, "slice") * 1000; break;
@@ -282,6 +308,7 @@ int main(int argc, char **argv)
 		case 'l': cfg.lag_ns = parse_ull(optarg, "lag") * 1000; break;
 		case 'p': cfg.batch_min_run_ns = parse_ull(optarg, "batch-min-run") * 1000; break;
 		case 'n': cfg.preempt_batch = false; break;
+		case 'F': cfg.cpufreq_ctl = false; break;
 		case 'i': stats_secs = parse_ull(optarg, "stats"); break;
 		case 'v': verbose = true; break;
 		case 'h': usage(argv[0]); return 0;
@@ -295,6 +322,8 @@ int main(int argc, char **argv)
 		return 2;
 	}
 
+	signal(SIGINT, on_signal);
+	signal(SIGTERM, on_signal);
 	check_sched_ext_state();
 
 	ncpu = libbpf_num_possible_cpus();
@@ -303,8 +332,6 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	signal(SIGINT, on_signal);
-	signal(SIGTERM, on_signal);
 
 	/* The kernel asks for a restart e.g. when CPUs change mid-load. */
 	for (;;) {

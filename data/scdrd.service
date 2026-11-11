@@ -8,6 +8,8 @@ After=dbus.service
 Type=dbus
 BusName=org.scdr.Daemon1
 ExecStart=/usr/bin/scdrd
+# Also after a crash: devbox mustn't keep favouring the last focused app.
+ExecStopPost=/usr/bin/rm -f /run/scdr/devbox-hints
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 # Exit 3: another priority daemon runs (see Conflicts=); retrying won't help.
@@ -23,10 +25,15 @@ RestartSec=2s
 # Only what scdrd needs: change other processes' scheduling (SYS_NICE),
 # listen to process events (NET_ADMIN), write their oom_score_adj
 # (SYS_RESOURCE, DAC_OVERRIDE) and read their exe links (SYS_PTRACE).
-CapabilityBoundingSet=CAP_SYS_NICE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_SYS_PTRACE
+# SETUID/SETGID: run `systemctl --user` as the unit's user to set its
+# weights; without them that goes through --machine and a PAM login session
+# per call.
+CapabilityBoundingSet=CAP_SYS_NICE CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_DAC_OVERRIDE CAP_SYS_PTRACE CAP_SETUID CAP_SETGID
 NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=yes
+# read-only, not yes: yes also hides /run/user, where the user managers'
+# sockets are (connecting to one is not a write).
+ProtectHome=read-only
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelModules=yes

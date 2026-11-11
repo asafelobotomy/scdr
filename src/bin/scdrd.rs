@@ -65,6 +65,12 @@ async fn main() -> anyhow::Result<()> {
         );
         std::process::exit(3);
     }
+    for d in scdr::rivals::overlapping(std::path::Path::new("/proc")) {
+        tracing::warn!(
+            "{d} is running: it also boosts games and switches sched_ext schedulers. Leave one of them in \
+             charge of games and schedulers (scdr: turn off the game role and [sched_ext])"
+        );
+    }
     let paths = Paths {
         etc: args.etc_dir,
         share: args.share_dir,
@@ -88,6 +94,11 @@ async fn main() -> anyhow::Result<()> {
     service.ledger_path = std::env::var_os("RUNTIME_DIRECTORY")
         .map(|d| std::path::PathBuf::from(d).join("ledger.json"))
         .filter(|_| !args.once);
+    // Focus hints for scx_devbox go next to it (see service::devbox).
+    service.hints_path = service
+        .ledger_path
+        .as_ref()
+        .map(|p| p.with_file_name(scdr::service::DEVBOX_HINTS_FILE));
 
     if args.once {
         service.startup();
@@ -305,8 +316,13 @@ async fn policy_step(policy: &mut Policy, bus: Option<&zbus::Connection>, servic
         let power = svc.power_profile().map(str::to_owned);
         (svc.config.sched_ext.clone(), svc.config.eevdf.clone(), power, svc.gaming())
     };
-    let report = policy.sync(bus, &sched_ext, &eevdf, power.as_deref(), gaming).await;
-    service.lock().unwrap().policy_report = report;
+    let mut report = policy.sync(bus, &sched_ext, &eevdf, power.as_deref(), gaming).await;
+    let mut svc = service.lock().unwrap();
+    svc.sync_devbox();
+    if svc.devbox_hints() {
+        report.push("devbox: focus hints on; foreground and background roles run in the scheduler".into());
+    }
+    svc.policy_report = report;
 }
 
 async fn power_profiles(

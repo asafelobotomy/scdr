@@ -1,6 +1,7 @@
 //! Daemon state: which processes exist, what applies to them, and why.
 
 mod control;
+mod devbox;
 mod inherit;
 mod knobs;
 mod ledger;
@@ -8,10 +9,12 @@ mod lineage;
 mod pressure;
 mod report;
 mod roles;
+mod split;
 mod transition;
 mod unit_jobs;
 
 pub use control::{ProcessReport, WidgetState};
+pub use devbox::HINTS_FILE as DEVBOX_HINTS_FILE;
 pub use pressure::cpu_some_avg10;
 pub use roles::SessionReport;
 pub use unit_jobs::{UnitDone, UnitJob, spawn_worker as spawn_unit_worker};
@@ -119,6 +122,7 @@ pub struct Service {
     procs: HashMap<u32, Entry>,
     units: BTreeMap<crate::units::UnitId, units::UnitState>,
     unit_queue: units::UnitQueue,
+    split: split::SplitState,
     autogroup_original: Option<bool>,
     /// Disks (MAJ:MIN) on which scdr enabled iocost.
     iocost_enabled: Vec<String>,
@@ -139,6 +143,15 @@ pub struct Service {
     /// Where the crash-recovery ledger lives (see `ledger`); `None` disables it.
     pub ledger_path: Option<std::path::PathBuf>,
     ledger_written: Option<String>,
+    /// Where focus hints for scx_devbox go (see `devbox`); `None` disables them.
+    pub hints_path: Option<std::path::PathBuf>,
+    devbox_hints: bool,
+    /// When devbox stopped taking hints, while within the grace period.
+    devbox_gone_since: Option<std::time::Instant>,
+    /// scx_devbox stats samples new this tick, and the last seq taken.
+    devbox_samples: Vec<devbox::DevboxSample>,
+    devbox_seq: u64,
+    hints_written: Option<String>,
 }
 
 impl Service {
@@ -150,6 +163,7 @@ impl Service {
             procs: HashMap::new(),
             units: BTreeMap::new(),
             unit_queue: Default::default(),
+            split: Default::default(),
             autogroup_original: None,
             iocost_enabled: Vec::new(),
             uclamp_active: false,
@@ -165,6 +179,12 @@ impl Service {
             self_pid: std::process::id(),
             ledger_path: None,
             ledger_written: None,
+            hints_path: None,
+            devbox_hints: false,
+            devbox_gone_since: None,
+            devbox_samples: Vec::new(),
+            devbox_seq: 0,
+            hints_written: None,
         }
     }
 
@@ -259,10 +279,15 @@ impl Service {
             self.evaluate(pid, Trigger::Scan);
         }
         self.sweep_units();
+        self.sweep_split();
     }
 
     pub fn reload(&mut self, config: Config) {
+        let split_off = self.config.split.enabled && !config.split.enabled;
         self.config = config;
+        if split_off {
+            self.restore_split();
+        }
         self.apply_system();
         self.rescan();
     }
@@ -270,6 +295,7 @@ impl Service {
     /// Restores every process scdr changed, and the autogroup setting.
     pub fn shutdown(&mut self) {
         self.restore_all();
+        self.drop_hints();
         self.run_unit_jobs_now();
         self.save_ledger();
     }
@@ -318,6 +344,8 @@ impl Service {
 
         let excepted = if pid == 1 || pid == self.self_pid {
             Some("system process".to_owned())
+        } else if info.ppid == self.self_pid {
+            Some("scdrd's own helper (systemctl)".to_owned())
         } else if let Some(s) = &self.procs[&pid].sticky {
             Some(s.clone())
         } else {
@@ -363,5 +391,6 @@ impl Service {
         self.transition(pid, &info, trigger, matched, excepted, inherit);
         let managed = matches!(self.procs[&pid].state, State::Managed(_));
         self.sync_unit(pid, &info, unit_profile.as_ref().filter(|_| managed));
+        self.maybe_split(pid, &info, trigger);
     }
 }
