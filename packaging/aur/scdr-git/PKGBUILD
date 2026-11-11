@@ -53,7 +53,8 @@ package_scdr-git() {
               'scx-devbox: sched_ext scheduler that follows scdr profiles'
               'pipewire: audio-client role (pw-dump)'
               'gamemode: game role'
-              'power-profiles-daemon: per-power-profile roles')
+              'power-profiles-daemon: per-power-profile roles'
+              'uq: the Scheduling page in uQ Settings')
   provides=('scdr')
   conflicts=('scdr')
 

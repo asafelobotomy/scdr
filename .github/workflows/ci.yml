@@ -33,3 +33,43 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+
+  uq:
+    name: uQ Settings page
+    runs-on: ubuntu-24.04
+    env:
+      UQ_TAG: v0.3.0-rc.1 # the uQ release whose `uqctl` and settings page test kit this repo follows
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Install Qt Quick and qmltestrunner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-declarative-dev-tools \
+            qml6-module-qtquick qml6-module-qtquick-layouts qml6-module-qtquick-controls \
+            qml6-module-qttest qml6-module-qtqml-workerscript \
+            qml6-module-qtquick-window qml6-module-qtquick-templates
+      # The shell expands the glob, so any Node the runner has will do.
+      - name: Page logic and manifest tests (Node)
+        run: node --test tests/uq/*.test.mjs
+      - name: Page test (QML)
+        run: QT_QPA_PLATFORM=offscreen /usr/lib/qt6/bin/qmltestrunner -import tests/uq/stub -input tests/uq
+      - name: Packaging installs exactly the page's files
+        run: sh tests/uq/install_test.sh
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - name: Cache uqctl
+        id: uqctl
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.uq
+          key: uqctl-${{ env.UQ_TAG }}
+      - name: Build uqctl
+        if: steps.uqctl.outputs.cache-hit != 'true'
+        run: cargo install --locked --git https://github.com/asafelobotomy/uq --tag "$UQ_TAG" uqctl --root "$HOME/.uq"
+      # `--no-programs` skips only the "program exists" check: scdr isn't installed here.
+      # Paths and everything else are still checked. Expect "ok: … (programs not checked)".
+      - name: Check the page with uqctl
+        run: ~/.uq/bin/uqctl integrations check --no-programs uq/

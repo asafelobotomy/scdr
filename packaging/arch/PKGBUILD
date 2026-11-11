@@ -48,7 +48,8 @@ package_scdr() {
               'scx-devbox: sched_ext scheduler that follows scdr profiles'
               'pipewire: audio-client role (pw-dump)'
               'gamemode: game role'
-              'power-profiles-daemon: per-power-profile roles')
+              'power-profiles-daemon: per-power-profile roles'
+              'uq: the Scheduling page in uQ Settings')
 
   cd "$_root"
   ./packaging/install.sh "$pkgdir" "$srcdir/target/release"

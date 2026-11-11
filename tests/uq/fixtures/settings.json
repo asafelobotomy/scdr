@@ -1,0 +1,26 @@
+{
+  "layer_file": "/var/lib/scdr/settings.toml",
+  "layer": {
+    "sched_ext": { "enable": true, "default": "bpfland", "power": { "performance": "lavd" } },
+    "rule": [
+      { "profile": "desktop", "name": "firefox" },
+      { "profile": "game", "name": ["steam*"] },
+      { "profile": "background", "exe": "/opt/x/*", "name": "x" },
+      { "profile": "desktop", "name": ["a", "b"] }
+    ]
+  },
+  "base": {
+    "profile": { "desktop": {}, "game": {}, "background": {} },
+    "rule": [{ "profile": "background", "name": "baloo*", "_source": "/usr/share/scdr/scdr.toml" }]
+  },
+  "schedulers": [
+    { "name": "bpfland", "description": "General purpose", "modes": ["auto", "gaming"], "installed": true },
+    { "name": "lavd", "description": "Low latency", "modes": ["auto"], "installed": true },
+    { "name": "rusty", "description": "Multi-domain", "modes": ["auto"], "installed": false }
+  ],
+  "scx_loader_error": null,
+  "current_scheduler": "scx_bpfland:auto",
+  "trial": null,
+  "modes": ["auto", "gaming", "powersave", "lowlatency", "server"],
+  "power_profiles": ["power-saver", "balanced", "performance"]
+}

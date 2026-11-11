@@ -1,0 +1,22 @@
+{
+  "paused": false,
+  "managed": 12,
+  "power_profile": "balanced",
+  "cpu_pressure": 34.2,
+  "pressure_active": false,
+  "scheduler": ["bpfland", "auto"],
+  "roles": [
+    ["foreground", "desktop", true],
+    ["audio", "realtime", true],
+    ["game", "game", true],
+    ["background", "background", false]
+  ],
+  "agents": 1,
+  "boosted": [
+    { "pid": 2101, "name": "firefox", "profile": "desktop", "role": "foreground", "why": "foreground:window focus", "app": "org.mozilla.firefox" },
+    { "pid": 2230, "name": "<b>x</b>", "profile": "realtime", "role": "audio", "why": "audio:playing", "app": null }
+  ],
+  "memory_pressure": 1.5,
+  "io_pressure": 0.2,
+  "devbox": []
+}
