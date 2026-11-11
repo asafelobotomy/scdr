@@ -46,7 +46,7 @@ ColumnLayout {
                 visible: ruleRow.modelData.simple
                 enabled: host.busy === ""
                 text: "Remove"
-                onClicked: host.removeRule(ruleRow.modelData.name, ruleRow.modelData.index)
+                onClicked: host.removeRule(ruleRow.modelData.name, ruleRow.modelData.rawName, ruleRow.modelData.index)
             }
         }
     }

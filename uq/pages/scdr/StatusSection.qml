@@ -14,7 +14,7 @@ ColumnLayout {
         settingId: "status"
         label: host.view.status === "ready" && !host.settingsDown
             ? (host.view.state.paused ? "scdr is paused" : "scdr is running")
-            : (host.down ? "scdr isn't running" : "Checking…")
+            : (host.down ? "scdr isn't running" : (host.view.status === "error" ? "scdr" : "Checking…"))
         highlight: host.highlight
         Layout.fillWidth: true
         QQC2.Button {

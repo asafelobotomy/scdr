@@ -4,7 +4,7 @@
 
 var RULE_NAME = "^[A-Za-z0-9][A-Za-z0-9._+*?@ -]{0,63}$";
 var PROFILE = "^[a-z0-9][a-z0-9_-]{0,39}$";
-var CHOICE = "^(eevdf|[A-Za-z0-9_]{1,32}(:(auto|gaming|powersave|lowlatency|server))?)$";
+var CHOICE = "^(eevdf|(?!eevdf:)[A-Za-z0-9_]{1,32}(:(auto|gaming|powersave|lowlatency|server))?)$";
 
 // uQ refuses D-Bus arguments over 16 KiB of JSON; scdr itself accepts far more (F19).
 var MAX_DOCUMENT = 15 * 1024;
@@ -20,7 +20,7 @@ var CONFIRMS = {
 
 var MESSAGES = {
     BadScheduler: "That isn't a scheduler scdr knows.",
-    BadName: "Use letters, numbers and . _ + * ? @ - only, starting with a letter or number. 64 characters at most.",
+    BadName: "Use letters, numbers, spaces and . _ + * ? @ - only, starting with a letter or number. 64 characters at most.",
     BadProfile: "Pick one of the profiles in the list.",
     Duplicate: "You already have a rule for that app and profile.",
     Changed: "Your rules changed elsewhere; refresh and try again.",
@@ -160,6 +160,7 @@ function parseSettings(text) {
         rules.push({
             index: i,
             name: clip(name !== null ? name : describeRule(r), 120),
+            rawName: name !== null ? name : "",
             profile: clip(r.profile),
             simple: simple
         });

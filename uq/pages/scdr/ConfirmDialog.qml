@@ -22,10 +22,15 @@ QQC2.Dialog {
         dialog.open();
     }
 
-    contentItem: UqLabel {
-        text: dialog.message
-        wrapMode: Text.Wrap
+    contentItem: Item {
         implicitWidth: 360
+        implicitHeight: body.implicitHeight
+        UqLabel {
+            id: body
+            width: parent.width
+            text: dialog.message
+            wrapMode: Text.Wrap
+        }
     }
 
     onAccepted: {

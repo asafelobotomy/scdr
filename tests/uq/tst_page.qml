@@ -165,11 +165,11 @@ Item {
         function test_failed_write_restores() {
             load({ dbus: { "SetRoleEnabled": { error: "org.freedesktop.DBus.Error.AccessDenied: not authorized" } } });
             loaded();
-            const row = findRow("Games");
-            flip(row, false);
+            flip(findRow("Games"), false);
             tryVerify(() => findLabel("You need to enter your password to change this.") !== null);
-            compare(row.value, true);
-            compare(row.toggle.checked, true);
+            // The roles are rebuilt by the re-read, so look the row up again.
+            tryVerify(() => findRow("Games") !== null && findRow("Games").value === true);
+            compare(findRow("Games").toggle.checked, true);
         }
 
         function test_cancel_is_silent() {
@@ -208,6 +208,18 @@ Item {
             compare(writes().length, 0);
         }
 
+        function test_starts_while_open() {
+            const down = "exit 1: The name org.scdr.Daemon1 was not provided by any .service files";
+            load({ commands: { "state": { code: 1, error: down } },
+                   dbus: { "Settings": { error: "org.freedesktop.DBus.Error.ServiceUnknown: not known" } } });
+            tryVerify(() => findLabel("scdr isn't running") !== null);
+            fake.commands = Object.assign({}, fake.commands, { "state": stateResult() });
+            fake.dbus = Object.assign({}, fake.dbus, { "Settings": { value: JSON.stringify(settingsDoc()) } });
+            fake.change("state");
+            tryVerify(() => findLabel("scdr is running") !== null);
+            tryVerify(() => findNamed("rule-0") !== null);
+        }
+
         function test_state_that_cannot_be_read() {
             load({ commands: { "state": { code: 0, output: { type: "s", data: "{" } } } });
             tryVerify(() => findLabel("scdr's state couldn't be read.") !== null);
@@ -243,7 +255,7 @@ Item {
             loaded();
             const field = findNamed("rule-name");
             field.text = "-rf";
-            tryVerify(() => findLabel("Use letters, numbers and . _ + * ? @ - only, starting with a letter or number. 64 characters at most.") !== null);
+            tryVerify(() => findLabel("Use letters, numbers, spaces and . _ + * ? @ - only, starting with a letter or number. 64 characters at most.") !== null);
             loader.item.addRule();
             wait(50);
             compare(writes().length, 0);

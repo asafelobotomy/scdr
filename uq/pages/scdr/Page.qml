@@ -29,6 +29,9 @@ Item {
     property var profileNames: []
     property var schedulerLabels: []
     property string ruleCheck: ""
+    // Callbacks that arrive after the page is gone do nothing.
+    property var life: ({ alive: true })
+    Component.onDestruction: life.alive = false
 
     readonly property alias confirmDialog: confirm
     readonly property alias flick: scroller
@@ -40,6 +43,14 @@ Item {
         .filter(s => s).join("\n")
     readonly property var sections: ({ "status": statusSection, "roles": rolesSection, "follow-focus": followSection,
                                         "scheduler": schedulerSection, "rules": rulesSection })
+
+    function live(fn) {
+        const life = page.life;
+        return result => {
+            if (life.alive)
+                fn(result);
+        };
+    }
 
     function colorOf(key, fallback) {
         const c = page.ctx && page.ctx.theme && page.ctx.theme.colors;
@@ -70,8 +81,12 @@ Item {
     }
 
     function onState(result) {
-        if (!page.skippable(result))
-            page.view = Logic.readState(result);
+        if (page.skippable(result))
+            return;
+        page.view = Logic.readState(result);
+        // scdr may have been started from elsewhere: read its settings again.
+        if (page.view.status === "ready" && (page.settingsDown || page.settings === null))
+            page.ctx.dbus.call("Settings", [], page.live(page.onSettings));
     }
 
     function onAgent(result) {
@@ -109,17 +124,17 @@ Item {
     function refresh() {
         if (!page.ctx)
             return;
-        page.ctx.command.run("state", [], page.onState);
-        page.ctx.command.run("agent-state", [], page.onAgent);
-        page.ctx.dbus.call("Settings", [], page.onSettings);
+        page.ctx.command.run("state", [], page.live(page.onState));
+        page.ctx.command.run("agent-state", [], page.live(page.onAgent));
+        page.ctx.dbus.call("Settings", [], page.live(page.onSettings));
     }
 
     onCtxChanged: {
         if (!page.ctx)
             return;
-        page.ctx.command.watch("state", page.onState);
-        page.ctx.command.watch("agent-state", page.onAgent);
-        page.ctx.dbus.call("Settings", [], page.onSettings);
+        page.ctx.command.watch("state", page.live(page.onState));
+        page.ctx.command.watch("agent-state", page.live(page.onAgent));
+        page.ctx.dbus.call("Settings", [], page.live(page.onSettings));
     }
 
     function syncScheduler() {
@@ -146,10 +161,10 @@ Item {
     function write(area, method, args) {
         page.busy = area;
         page.setProblem(area, "");
-        page.ctx.dbus.call(method, args, result => {
+        page.ctx.dbus.call(method, args, page.live(result => {
             page.finish(area, result);
             page.refresh();
-        });
+        }));
     }
 
     // Reads Settings again, changes a copy of the layer, and sends it back.
@@ -161,18 +176,18 @@ Item {
             page.setProblem(area, text);
             page.refresh();
         };
-        page.ctx.dbus.call("Settings", [], read => {
+        page.ctx.dbus.call("Settings", [], page.live(read => {
             if (read.error)
                 return stop(Logic.writeError(read));
             const edited = Logic.applyEdit(read.value, change);
             if (edited.error)
                 return stop(edited.error);
-            page.ctx.dbus.call("SetSettings", [edited.doc], result => {
+            page.ctx.dbus.call("SetSettings", [edited.doc], page.live(result => {
                 if (page.finish(area, result) && after)
                     after();
                 page.refresh();
-            });
-        });
+            }));
+        }));
     }
 
     function setScheduler(index) {
@@ -185,7 +200,9 @@ Item {
     function addRule() {
         const profile = page.profileNames[rulesSection.profile.currentIndex] || "";
         page.ruleCheck = Logic.checkRuleName(rulesSection.field.text);
-        if (page.ruleCheck !== "" || Logic.checkProfile(profile) !== "")
+        if (page.ruleCheck === "" && Logic.checkProfile(profile) !== "")
+            page.ruleCheck = Logic.checkProfile(profile);
+        if (page.ruleCheck !== "")
             return;
         const name = rulesSection.field.text;
         page.edit("rules", layer => Logic.addRule(layer, profile, name), () => {
@@ -194,26 +211,26 @@ Item {
         });
     }
 
-    function removeRule(name, index) {
-        confirm.ask(Logic.confirmText("rule-remove", name), () => page.edit("rules", layer => Logic.removeRule(layer, name, index)));
+    function removeRule(shown, name, index) {
+        confirm.ask(Logic.confirmText("rule-remove", shown), () => page.edit("rules", layer => Logic.removeRule(layer, name, index)));
     }
 
     function setAgent(on) {
         page.busy = "agent";
         page.setProblem("agent", "");
-        page.ctx.command.run(on ? "agent-on" : "agent-off", [], result => {
+        page.ctx.command.run(on ? "agent-on" : "agent-off", [], page.live(result => {
             page.finish("agent", result);
-            page.ctx.command.run("agent-state", [], page.onAgent);
-        });
+            page.ctx.command.run("agent-state", [], page.live(page.onAgent));
+        }));
     }
 
     function start() {
         page.busy = "start";
         page.setProblem("start", "");
-        page.ctx.command.run("start", [], result => {
+        page.ctx.command.run("start", [], page.live(result => {
             page.finish("start", result);
             page.refresh();
-        });
+        }));
     }
 
     function scrollTo(id) {

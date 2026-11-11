@@ -334,3 +334,17 @@ test("page_files_stay_small_and_unstyled", () => {
     assert.doesNotMatch(text, /import org\.kde|Kirigami/, f);
   }
 });
+
+test("rejects_hostile_values", () => {
+  for (const bad of ["-rf", "a\nb", "a/b", "x".repeat(65), ""]) assert.equal(L.addRule({}, "desktop", bad).code, "BadName");
+  for (const bad of ["bpf land", "x:turbo", "eevdf:gaming", "a\nb"]) assert.equal(L.setScheduler({}, bad).code, "BadScheduler", bad);
+});
+
+test("long_rule_names_can_be_removed", () => {
+  const name = "n".repeat(150);
+  const text = JSON.stringify({ layer: { rule: [{ profile: "desktop", name }] } });
+  const rule = plain(L.parseSettings(text)).layerRules[0];
+  assert.equal(rule.name.length, 120);
+  assert.equal(rule.rawName, name);
+  assert.equal(L.removeRule(JSON.parse(text).layer, rule.rawName, 0).ok, true);
+});

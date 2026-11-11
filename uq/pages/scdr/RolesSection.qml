@@ -34,7 +34,7 @@ ColumnLayout {
                 value: roleRow.modelData.enabled
                 enabled: host.busy === ""
                 Layout.fillWidth: true
-                onChosen: on => host.write("role:" + roleRow.modelData.role, "SetRoleEnabled", [roleRow.modelData.role, on])
+                onChosen: on => host.write("role", "SetRoleEnabled", [roleRow.modelData.role, on])
             }
             UqLabel {
                 text: "Uses the " + roleRow.modelData.profile + " profile"

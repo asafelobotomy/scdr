@@ -20,6 +20,13 @@ ColumnLayout {
         onChosen: on => host.setAgent(on)
     }
     UqLabel {
+        visible: !host.agentKnown
+        text: "This can't be changed here right now."
+        color: host.mutedColor
+        wrapMode: Text.Wrap
+        Layout.fillWidth: true
+    }
+    UqLabel {
         visible: host.working("agent")
         text: "Working…"
         color: host.mutedColor
