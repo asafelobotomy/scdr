@@ -1,0 +1,288 @@
+// The Scheduling page for uQ Settings: scdr's state, its boosts, the CPU scheduler, the person's
+// own app rules and the focus agent. Reads follow scdr's State (watched); changes go over D-Bus
+// with long deadlines, since they may wait for a password. Pure logic is in logic.js; every
+// piece of text goes through UqLabel.
+import QtQuick
+import QtQuick.Controls as QQC2
+import QtQuick.Layouts
+import org.uq.settings
+import "logic.js" as Logic
+
+Item {
+    id: page
+
+    property var ctx
+    /// The search row to scroll to (from [[setting]] ids).
+    property string highlight
+
+    // What was last read.
+    property var view: ({ status: "loading" })
+    property var settings: null
+    property string settingsError: ""
+    property bool settingsDown: false
+    property bool agentKnown: false
+    property bool agentOn: false
+    // What is in flight ("" when nothing is) and why the last change failed, by area.
+    property string busy: ""
+    property var problems: ({})
+    property bool showAdvanced: false
+    property var profileNames: []
+    property var schedulerLabels: []
+    property string ruleCheck: ""
+
+    readonly property alias confirmDialog: confirm
+    readonly property alias flick: scroller
+    readonly property bool ready: view.status === "ready" && !settingsDown
+    readonly property bool down: view.status === "not-running" || settingsDown
+    readonly property string mutedColor: colorOf("text_muted", "#707070")
+    readonly property string errorColor: colorOf("error", "#c00000")
+    readonly property string advancedText: [view.detail, settings ? settings.loaderError : "", settingsDown ? "" : settingsError]
+        .filter(s => s).join("\n")
+    readonly property var sections: ({ "status": statusSection, "roles": rolesSection, "follow-focus": followSection,
+                                        "scheduler": schedulerSection, "rules": rulesSection })
+
+    function colorOf(key, fallback) {
+        const c = page.ctx && page.ctx.theme && page.ctx.theme.colors;
+        return (c && c[key]) || fallback;
+    }
+
+    function problem(area) {
+        return page.problems[area] || "";
+    }
+
+    function setProblem(area, text) {
+        const copy = {};
+        for (const k in page.problems)
+            copy[k] = page.problems[k];
+        copy[area] = text;
+        page.problems = copy;
+    }
+
+    function working(area) {
+        return page.busy.indexOf(area) === 0;
+    }
+
+    // ---- Reads ----
+
+    // A watch and a write's re-read can overlap; the one that lost has nothing new to say.
+    function skippable(result) {
+        return result && result.error && /already running/i.test(String(result.error));
+    }
+
+    function onState(result) {
+        if (!page.skippable(result))
+            page.view = Logic.readState(result);
+    }
+
+    function onAgent(result) {
+        if (page.skippable(result))
+            return;
+        const on = Logic.agentEnabled(result);
+        page.agentKnown = on !== null;
+        page.agentOn = on === true;
+    }
+
+    function onSettings(result) {
+        if (result.error) {
+            page.settingsDown = Logic.notRunning(result.error);
+            page.settingsError = String(result.error).slice(0, 400);
+            return;
+        }
+        const s = Logic.parseSettings(result.value);
+        page.settingsDown = false;
+        page.settingsError = s.error || "";
+        if (s.error)
+            return;
+        page.settings = s;
+        if (JSON.stringify(s.profiles) !== JSON.stringify(page.profileNames)) {
+            page.profileNames = s.profiles;
+            rulesSection.profile.currentIndex = Math.max(0, s.profiles.indexOf("desktop"));
+        }
+        const labels = s.schedulers.map(x => x.label);
+        if (JSON.stringify(labels) !== JSON.stringify(page.schedulerLabels))
+            page.schedulerLabels = labels;
+        page.syncScheduler();
+        if (page.highlight !== "")
+            Qt.callLater(page.scrollTo, page.highlight);
+    }
+
+    function refresh() {
+        if (!page.ctx)
+            return;
+        page.ctx.command.run("state", [], page.onState);
+        page.ctx.command.run("agent-state", [], page.onAgent);
+        page.ctx.dbus.call("Settings", [], page.onSettings);
+    }
+
+    onCtxChanged: {
+        if (!page.ctx)
+            return;
+        page.ctx.command.watch("state", page.onState);
+        page.ctx.command.watch("agent-state", page.onAgent);
+        page.ctx.dbus.call("Settings", [], page.onSettings);
+    }
+
+    function syncScheduler() {
+        if (!page.settings)
+            return;
+        const i = page.settings.schedulers.findIndex(x => x.value === page.settings.choice);
+        schedulerSection.combo.currentIndex = i < 0 ? 0 : i;
+    }
+
+    // ---- Changes ----
+
+    function finish(area, result) {
+        page.busy = "";
+        if (result && result.cancelled)
+            return false;
+        if (result && result.error) {
+            page.setProblem(area, Logic.writeError(result));
+            return false;
+        }
+        return true;
+    }
+
+    // One D-Bus write, then a fresh read of everything.
+    function write(area, method, args) {
+        page.busy = area;
+        page.setProblem(area, "");
+        page.ctx.dbus.call(method, args, result => {
+            page.finish(area, result);
+            page.refresh();
+        });
+    }
+
+    // Reads Settings again, changes a copy of the layer, and sends it back.
+    function edit(area, change, after) {
+        page.busy = area;
+        page.setProblem(area, "");
+        const stop = text => {
+            page.busy = "";
+            page.setProblem(area, text);
+            page.refresh();
+        };
+        page.ctx.dbus.call("Settings", [], read => {
+            if (read.error)
+                return stop(Logic.writeError(read));
+            const edited = Logic.applyEdit(read.value, change);
+            if (edited.error)
+                return stop(edited.error);
+            page.ctx.dbus.call("SetSettings", [edited.doc], result => {
+                if (page.finish(area, result) && after)
+                    after();
+                page.refresh();
+            });
+        });
+    }
+
+    function setScheduler(index) {
+        const choice = page.settings.schedulers[index].value;
+        if (choice === page.settings.choice)
+            return;
+        page.edit("scheduler", layer => Logic.setScheduler(layer, choice));
+    }
+
+    function addRule() {
+        const profile = page.profileNames[rulesSection.profile.currentIndex] || "";
+        page.ruleCheck = Logic.checkRuleName(rulesSection.field.text);
+        if (page.ruleCheck !== "" || Logic.checkProfile(profile) !== "")
+            return;
+        const name = rulesSection.field.text;
+        page.edit("rules", layer => Logic.addRule(layer, profile, name), () => {
+            rulesSection.field.text = "";
+            page.ruleCheck = "";
+        });
+    }
+
+    function removeRule(name, index) {
+        confirm.ask(Logic.confirmText("rule-remove", name), () => page.edit("rules", layer => Logic.removeRule(layer, name, index)));
+    }
+
+    function setAgent(on) {
+        page.busy = "agent";
+        page.setProblem("agent", "");
+        page.ctx.command.run(on ? "agent-on" : "agent-off", [], result => {
+            page.finish("agent", result);
+            page.ctx.command.run("agent-state", [], page.onAgent);
+        });
+    }
+
+    function start() {
+        page.busy = "start";
+        page.setProblem("start", "");
+        page.ctx.command.run("start", [], result => {
+            page.finish("start", result);
+            page.refresh();
+        });
+    }
+
+    function scrollTo(id) {
+        const item = page.sections[id];
+        if (!item || !item.visible)
+            return;
+        const y = item.mapToItem(scroller.contentItem, 0, 0).y;
+        scroller.contentY = Math.max(0, Math.min(y, scroller.contentHeight - scroller.height));
+    }
+
+    onHighlightChanged: Qt.callLater(page.scrollTo, page.highlight)
+
+    ConfirmDialog {
+        id: confirm
+    }
+
+    Flickable {
+        id: scroller
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: column.implicitHeight + 32
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        QQC2.ScrollBar.vertical: QQC2.ScrollBar {}
+
+        ColumnLayout {
+            id: column
+            x: 16
+            y: 16
+            width: scroller.width - 32
+            spacing: 20
+
+            StatusSection {
+                id: statusSection
+                host: page
+            }
+            RolesSection {
+                id: rolesSection
+                host: page
+            }
+            FollowSection {
+                id: followSection
+                host: page
+            }
+            SchedulerSection {
+                id: schedulerSection
+                host: page
+            }
+            RulesSection {
+                id: rulesSection
+                host: page
+            }
+            // ---- Advanced details ----
+            ColumnLayout {
+                visible: page.advancedText !== ""
+                Layout.fillWidth: true
+                QQC2.Button {
+                    flat: true
+                    text: "Advanced details"
+                    onClicked: page.showAdvanced = !page.showAdvanced
+                }
+                UqLabel {
+                    visible: page.showAdvanced
+                    text: page.advancedText
+                    color: page.mutedColor
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                }
+            }
+        }
+    }
+}
