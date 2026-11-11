@@ -1,0 +1,83 @@
+# uQ Settings page for scdr. Installed to /usr/share/uq/settings/pages/scdr/ by scdr's
+# package; inert without uQ. Reference: docs/settings-pages.md in the uQ repository.
+uq_api = 1
+id = "scdr"
+name = "Scheduling"
+icon = "preferences-system-performance"
+category = "apps"
+qml = "Page.qml"
+keywords = ["scdr", "cpu", "priority", "scheduler", "focus", "games", "audio", "performance"]
+
+[[setting]]
+id = "status"
+label = "Scheduling on or paused"
+keywords = ["pause", "resume", "running"]
+
+[[setting]]
+id = "roles"
+label = "Boost the app you use, audio and games"
+keywords = ["focus", "foreground", "game", "audio", "background", "boost"]
+
+[[setting]]
+id = "scheduler"
+label = "CPU scheduler"
+keywords = ["scheduler", "sched_ext", "scx", "bpfland", "lavd", "eevdf"]
+
+[[setting]]
+id = "rules"
+label = "Your app rules"
+keywords = ["rule", "priority", "app", "nice"]
+
+[[setting]]
+id = "follow-focus"
+label = "Follow the focused window"
+keywords = ["agent", "session", "focus", "window"]
+
+[requires]
+bins = ["scdrctl"]
+
+# Writes (Pause, Resume, SetRoleEnabled, SetSettings) may wait for the person's password, so they
+# get the longest deadline. Pause and removing a rule ask first inside the page (ConfirmDialog.qml).
+[dbus]
+name = "org.scdr.Daemon1"
+path = "/org/scdr/Daemon1"
+interface = "org.scdr.Daemon1"
+methods = ["Status", "Processes", "Settings", "Pause", "Resume", "SetRoleEnabled", "SetSettings"]
+properties = ["State"]
+bus = "system"
+timeout_ms = { Pause = 120000, Resume = 120000, SetRoleEnabled = 120000, SetSettings = 120000 }
+
+# The State property, read with busctl so uQ can follow its PropertiesChanged signal.
+[[command]]
+id = "state"
+argv = ["/usr/bin/busctl", "--system", "--json=short", "get-property", "org.scdr.Daemon1", "/org/scdr/Daemon1", "org.scdr.Daemon1", "State"]
+output = "json"
+timeout_ms = 5000
+watch = { signals = [{ bus = "system", interface = "org.freedesktop.DBus.Properties", member = "PropertiesChanged", path = "/org/scdr/Daemon1", sender = "org.scdr.Daemon1" }] }
+
+# Whether the focus agent starts with the session: its enable link in the user's units.
+[[command]]
+id = "agent-state"
+argv = ["/usr/bin/systemctl", "--user", "is-enabled", "scdr-session.service"]
+output = "text"
+timeout_ms = 5000
+watch = { files = ["~/.config/systemd/user/graphical-session.target.wants/scdr-session.service"] }
+
+[[command]]
+id = "agent-on"
+argv = ["/usr/bin/systemctl", "--user", "enable", "--now", "scdr-session.service"]
+output = "none"
+timeout_ms = 20000
+
+[[command]]
+id = "agent-off"
+argv = ["/usr/bin/systemctl", "--user", "disable", "--now", "scdr-session.service"]
+output = "none"
+timeout_ms = 20000
+confirm = "Stop following the focused window? The app you're using no longer gets a boost."
+
+[[command]]
+id = "start"
+argv = ["/usr/bin/systemctl", "enable", "--now", "scdrd.service"]
+output = "none"
+timeout_ms = 120000
