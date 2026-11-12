@@ -45,6 +45,7 @@ Item {
         property var answers: ({})
         property string stateText: ""
         property int popups: 0
+        property int closes: 0
         // Bumped on each load: answers for an older load are dropped, as uQ does.
         property int generation: 0
 
@@ -81,7 +82,7 @@ Item {
         },
         command: { run: function (id, args, cb) { cb({ error: "none" }); } },
         openPopup: function () { fake.popups++; },
-        closePopup: function () {},
+        closePopup: function () { fake.closes++; },
         fail: function (reason) { console.warn("widget failed: " + reason); }
     })
 
@@ -138,6 +139,7 @@ Item {
             fake.calls = [];
             fake.answers = {};
             fake.popups = 0;
+            fake.closes = 0;
             fake.generation++;
             fake.stateText = root.stateDoc();
             popupLoader.sourceComponent = null;
@@ -179,6 +181,19 @@ Item {
             verify(walk(p, "pressure-graph").visible);
             compare(walk(p, "pause").text, "Pause");
             verify(walk(p, "role-background") !== null);
+        }
+
+        function test_popup_keeps_its_size_and_closes() {
+            var p = openPopup();
+            var h = p.height;
+            // Rows coming and going (more boosted apps) must not resize the popup window.
+            var many = [];
+            for (var i = 0; i < 12; i++)
+                many.push({ pid: 100 + i, name: "app" + i, profile: "foreground", why: "focus" });
+            fake.emit(root.stateDoc({ boosted: many }));
+            compare(p.height, h);
+            mouseClick(walk(p, "close"));
+            compare(fake.closes, 1);
         }
 
         function test_pause_and_role() {

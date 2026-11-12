@@ -1,16 +1,37 @@
 // The widget's popup: scdr's state with Pause/Resume, the per-role switches, the live graphs
 // (ported from the Plasma widget's LiveGraphs.qml) and what is boosted now. `w` is Widget.qml's
 // root, which keeps the state and the history.
+//
+// The popup keeps one size: rows come and go (boosted apps, graphs once devbox samples arrive,
+// status lines), and a popup window that resizes while open loses the shell's focus grab, so a
+// click outside or Esc no longer closes it. The content scrolls inside instead.
 import QtQuick
 import "logic.js" as L
 
-Column {
-    id: details
+Item {
+    id: frame
 
     // Set by the shell after loading (the same ctx as the widget's); `w.ctx` is used instead, as
     // it is there from the start.
     property var ctx
     property var w
+
+    implicitWidth: 340
+    implicitHeight: 560
+    width: implicitWidth
+    height: implicitHeight
+
+    Flickable {
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: details.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+
+    Column {
+    id: details
+
+    readonly property var w: frame.w
     readonly property var c: w ? w.ctx : null
     readonly property var t: c ? c.Theme : null
     readonly property var s: w ? w.scdr : null
@@ -21,7 +42,7 @@ Column {
     readonly property var boostedRows: L.grouped(s ? s.boosted : [])
     readonly property int maxBoosted: 6
 
-    width: 340
+    width: frame.width
     spacing: 8
 
     function last(key) {
@@ -57,13 +78,23 @@ Column {
             id: pauseButton
             objectName: "pause"
             ctx: details.c
-            anchors.right: parent.right
+            anchors.right: closeButton.left
+            anchors.rightMargin: 6
             anchors.verticalCenter: parent.verticalCenter
             visible: details.s !== null
             enabled: details.w !== null && details.w.busy === "" && details.w.pending === null
             primary: details.s !== null && details.s.paused
             text: details.s && details.s.paused ? "Resume" : "Pause"
             onClicked: details.w.togglePause()
+        }
+        PillButton {
+            id: closeButton
+            objectName: "close"
+            ctx: details.c
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Close"
+            onClicked: if (details.c) details.c.closePopup()
         }
     }
 
@@ -230,5 +261,7 @@ Column {
         wrap: true
         color: details.t ? details.t.error : "red"
         text: details.w ? details.w.problem : ""
+    }
+}
     }
 }
