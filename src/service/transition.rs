@@ -46,7 +46,7 @@ impl Service {
                 apply::apply(pid, &m.original, &[m.target], dry_run);
                 let why = excepted.as_deref().unwrap_or("no rule matches");
                 // A role ending is logged once for its unit, not per process.
-                if trigger == Trigger::Role {
+                if quiet(trigger, dry_run) {
                     tracing::debug!("{} [{pid}]: restored ({why})", info.comm);
                 } else {
                     tracing::info!("{} [{pid}]: restored ({why})", info.comm);
@@ -108,6 +108,14 @@ fn drop_inherited(pid: u32, info: &ProcInfo, inh: &Inherited, dry_run: bool) {
     }
 }
 
+/// Whether a per-process change is logged at debug, not info: role switches
+/// (logged once for their unit) and new processes, which a build starts by
+/// the hundred a minute. Changes a scan or reload makes stay at info, as does
+/// everything in a dry run, whose output is the point.
+fn quiet(trigger: Trigger, dry_run: bool) -> bool {
+    !dry_run && matches!(trigger, Trigger::Role | Trigger::Exec | Trigger::Recheck)
+}
+
 fn log_apply(
     info: &ProcInfo,
     profile: &str,
@@ -123,7 +131,7 @@ fn log_apply(
     if out.errors.is_empty() {
         // Children usually inherit their parent's values, so most new processes
         // need no change; role switches are logged once for their unit.
-        if out.changed == 0 || trigger == Trigger::Role {
+        if out.changed == 0 || quiet(trigger, dry_run) {
             tracing::debug!("{} [{}]: {verb} {profile} ({out})", info.comm, info.pid);
         } else {
             tracing::info!("{} [{}]: {verb} {profile} ({out})", info.comm, info.pid);

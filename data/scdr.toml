@@ -265,6 +265,14 @@ name = [
     "ld.bfd", "ld.gold", "mold", "lld", "javac",
 ]
 
+# VMs and emulators an agent app's tools start (scdr's [split] moves them into
+# its tools slice): headless test machines, not something you watch. A VM you
+# start from your desktop isn't in that slice and keeps its normal priority.
+[[rule]]
+profile = "build"
+name = ["qemu-system-*", "qemu-kvm"]
+cgroup = "*tools.slice/*"
+
 [[rule]]
 profile = "indexer"
 name = [

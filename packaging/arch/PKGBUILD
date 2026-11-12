@@ -10,7 +10,7 @@
 pkgbase=scdr
 pkgname=('scdr' 'scx-devbox')
 pkgver=0.3.0
-pkgrel=19
+pkgrel=20
 pkgdesc="Process scheduling and priority daemon for EEVDF and sched_ext kernels"
 arch=('x86_64' 'aarch64')
 url="https://github.com/asafelobotomy/scdr"
