@@ -3,7 +3,7 @@ import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.uq.settings
-import "logic.js" as Logic
+import "words.js" as Words
 
 ColumnLayout {
     required property var host
@@ -30,7 +30,7 @@ ColumnLayout {
             Layout.fillWidth: true
             spacing: 0
             SwitchRow {
-                label: Logic.roleLabel(roleRow.modelData.role)
+                label: Words.roleLabel(roleRow.modelData.role)
                 value: roleRow.modelData.enabled
                 enabled: host.busy === ""
                 Layout.fillWidth: true
@@ -63,7 +63,7 @@ ColumnLayout {
         model: host.ready ? host.view.state.boosted.slice(0, 20) : []
         delegate: UqLabel {
             required property var modelData
-            text: Logic.boostedLine(modelData)
+            text: Words.boostedLine(modelData)
             elide: Text.ElideRight
             Layout.fillWidth: true
         }

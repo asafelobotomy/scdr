@@ -1,9 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { loadLogic } from "./load-logic.mjs";
+import { loadLogic, loadScript } from "./load-logic.mjs";
 
 const L = loadLogic();
+const W = loadScript("words.js", L);
+const S = loadScript("schedulers.js", L);
+const R = loadScript("rules.js", L);
 const dir = new URL("../../uq/pages/scdr/", import.meta.url);
 const fixture = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8");
 const manifest = readFileSync(new URL("page.toml", dir), "utf8");
@@ -46,9 +49,9 @@ test("parses_state_fixture", () => {
   assert.deepEqual(s.roles[3], { role: "background", profile: "background", enabled: false });
   assert.equal(s.roles.length, 4);
   assert.deepEqual(s.boosted.map((b) => b.name), ["firefox", "<b>x</b>"]);
-  assert.equal(L.pressureText(s), "CPU busy: 34 %");
-  assert.equal(L.managedText(s), "12 apps managed");
-  assert.equal(L.boostedLine(s.boosted[0]), "firefox — desktop");
+  assert.equal(W.pressureText(s), "CPU busy: 34 %");
+  assert.equal(W.managedText(s), "12 apps managed");
+  assert.equal(W.boostedLine(s.boosted[0]), "firefox — desktop");
 });
 
 test("reads_busctl_wrapper_and_failures", () => {
@@ -87,52 +90,49 @@ test("settings_fixture", () => {
     [2, "x", "background", false],
     [3, "name = a, b", "desktop", false],
   ]);
+  assert.deepEqual(s.layerRules[2].conditions, [{ field: "name", text: "x" }, { field: "exe", text: "/opt/x/*" }]);
+  assert.deepEqual(s.layerRules[3].conditions, [{ field: "name", text: "a, b" }]);
+  assert.equal(s.layerRules[1].key, JSON.stringify({ profile: "game", name: ["steam*"] }));
   assert.deepEqual(s.profiles, ["background", "desktop", "game"]);
-  assert.deepEqual(s.schedulers.map((x) => x.value), ["eevdf", "bpfland", "bpfland:gaming", "lavd"]);
-  assert.deepEqual(s.schedulers[0], { value: "eevdf", label: "Kernel default" });
-  assert.equal(s.schedulers[2].label, "bpfland (gaming)");
-  assert.equal(s.choice, "bpfland");
+  assert.deepEqual(s.installed.map((x) => x.value), ["bpfland", "bpfland:gaming", "lavd", "devbox"]);
+  assert.equal(s.installed[1].label, "bpfland (gaming)");
+  assert.deepEqual(s.cards.map((c) => [c.name, c.installed, c.modes.length]),
+    [["bpfland", true, 2], ["lavd", true, 1], ["rusty", false, 1], ["devbox", true, 1]]);
+  assert.equal(s.cards[2].description, "Multi-domain");
+  assert.equal(s.schedExt, true);
+  assert.deepEqual(s.powerProfiles, ["power-saver", "balanced", "performance"]);
+  assert.equal(s.trial, null);
   assert.equal(s.currentScheduler, "bpfland");
   assert.equal(s.loaderError, "");
   assert.ok(L.parseSettings("[]").error);
   assert.ok(L.parseSettings("nope").error);
 });
 
-test("settings_choice_cases", () => {
+test("settings_scheduler_cases", () => {
   const doc = (layer, extra = {}) => JSON.stringify({ layer, base: {}, schedulers: [], ...extra });
-  assert.equal(L.parseSettings(doc({})).choice, "eevdf");
-  assert.equal(L.parseSettings(doc({ sched_ext: { enable: false, default: "bpfland" } })).choice, "eevdf");
-  const gone = plain(L.parseSettings(doc({ sched_ext: { enable: true, default: "scx_rusty:auto" } })));
-  assert.equal(gone.choice, "rusty");
-  assert.equal(gone.schedulers.at(-1).label, "rusty (not installed)");
+  assert.equal(L.parseSettings(doc({})).schedExt, false);
+  assert.equal(L.parseSettings(JSON.stringify({ layer: {}, base: { sched_ext: { enable: true } } })).schedExt, true);
+  assert.equal(L.parseSettings(JSON.stringify({ layer: { sched_ext: { enable: false } }, base: { sched_ext: { enable: true } } })).schedExt, false);
   assert.equal(L.parseSettings(doc({}, { scx_loader_error: "no loader" })).loaderError, "no loader");
+  // Odd entries in the scheduler list are skipped; a list without modes means "auto".
+  const odd = plain(L.parseSettings(doc({}, { schedulers: [{ name: "a b", installed: true }, { name: "x", installed: true }, 7] })));
+  assert.deepEqual(odd.installed, [{ value: "x", label: "x" }]);
+  assert.deepEqual(odd.cards[0].modes, ["auto"]);
+  // Without a power profile list, the usual three.
+  assert.deepEqual(plain(L.parseSettings(doc({}, { power_profiles: undefined })).powerProfiles), ["power-saver", "balanced", "performance"]);
 });
 
-test("scheduler_eevdf_disables", () => {
-  const layer = { sched_ext: { enable: true, default: "lavd" } };
-  assert.equal(L.setScheduler(layer, "eevdf").ok, true);
-  assert.deepEqual(plain(layer.sched_ext), { enable: false, default: "eevdf" });
-});
-
-test("scheduler_named_enables_and_keeps_power_keys", () => {
-  const layer = { sched_ext: { power: { performance: "lavd" }, gaming: "lavd:gaming" } };
-  assert.equal(L.setScheduler(layer, "bpfland:gaming").ok, true);
-  assert.equal(layer.sched_ext.enable, true);
-  assert.equal(layer.sched_ext.default, "bpfland:gaming");
-  assert.equal(layer.sched_ext.power.performance, "lavd");
-  assert.equal(layer.sched_ext.gaming, "lavd:gaming");
-  const empty = {};
-  L.setScheduler(empty, "lavd");
-  assert.deepEqual(plain(empty), { sched_ext: { enable: true, default: "lavd" } });
-});
-
-test("scheduler_rejects_bad_choice", () => {
-  for (const bad of ["bpf land", "x:turbo", "", "a/b", "x".repeat(40), "-x", "a\nb", null]) {
-    const layer = {};
-    const r = L.setScheduler(layer, bad);
-    assert.equal(r.code, "BadScheduler", String(bad));
-    assert.deepEqual(plain(layer), {});
-  }
+test("trial_parsing", () => {
+  const doc = (trial) => JSON.stringify({ layer: {}, base: {}, trial });
+  assert.equal(L.parseSettings(doc(null)).trial, null);
+  assert.equal(L.parseSettings(doc({ was: "eevdf" })).trial, null);
+  assert.equal(L.parseSettings(doc("x")).trial, null);
+  const t = plain(L.parseSettings(doc({ trying: "scx_devbox:auto", was: "eevdf" })).trial);
+  assert.deepEqual(t, { trying: "devbox", was: "Kernel default" });
+  assert.equal(W.trialText(t), "Trying devbox (was Kernel default). It isn't saved; stop the trial to go back.");
+  const m = plain(L.parseSettings(doc({ trying: "scx_bpfland:gaming", was: "scx_lavd:auto" })).trial);
+  assert.deepEqual(m, { trying: "bpfland (gaming)", was: "lavd" });
+  assert.equal(W.trialText(null), "");
 });
 
 test("add_rule_appends_and_creates", () => {
@@ -156,28 +156,28 @@ test("add_rule_refuses", () => {
   assert.equal(L.addRule(layer, "game", "firefox").index, 1);
 });
 
-test("remove_rule_checks_name", () => {
-  const layer = { rule: [{ profile: "a", name: "one" }, { profile: "b", name: ["two"] }, { profile: "c", name: ["x", "y"] }] };
-  assert.equal(L.removeRule(layer, "wrong", 0).code, "Changed");
+test("remove_rule_checks_key", () => {
+  const rules = [{ profile: "a", name: "one" }, { profile: "b", name: ["two"] }, { profile: "c", name: ["x", "y"] }];
+  const layer = { rule: plain(rules) };
+  const key = (i) => JSON.stringify(rules[i]);
+  assert.equal(R.removeRule(layer, 0, key(1)).code, "Changed");
   assert.equal(layer.rule.length, 3);
-  assert.equal(L.removeRule(layer, "two", 2).code, "Changed");
-  assert.equal(L.removeRule(layer, "x", 2).code, "Changed");
-  assert.equal(L.removeRule(layer, "two", 7).code, "NoSuchRule");
-  assert.equal(L.removeRule({}, "two", 0).code, "NoSuchRule");
-  assert.equal(L.removeRule(layer, "two", 1).ok, true);
-  assert.equal(L.removeRule(layer, "one", 0).ok, true);
-  assert.equal(layer.rule.length, 1);
+  assert.equal(R.removeRule(layer, 7, key(1)).code, "NoSuchRule");
+  assert.equal(R.removeRule({}, 0, key(0)).code, "NoSuchRule");
+  assert.equal(R.removeRule(layer, 2, key(2)).ok, true);
+  assert.equal(R.removeRule(layer, 0, key(0)).ok, true);
+  assert.deepEqual(plain(layer.rule), [rules[1]]);
   const last = { rule: [{ profile: "a", name: "one" }], other: 1 };
-  assert.equal(L.removeRule(last, "one", 0).ok, true);
+  assert.equal(R.removeRule(last, 0, JSON.stringify(last.rule[0])).ok, true);
   assert.deepEqual(plain(last), { other: 1 });
 });
 
 test("messages_are_plain", () => {
   const codes = ["BadScheduler", "BadName", "BadProfile", "Duplicate", "Changed", "NoSuchRule", "Unreadable", "TooBig"];
   const texts = [
-    L.setScheduler({}, "x y").error, L.addRule({}, "d", "").error, L.addRule({}, "D", "x").error,
-    L.addRule({ rule: [{ profile: "d", name: "x" }] }, "d", "x").error, L.removeRule({ rule: [{ name: "a" }] }, "b", 0).error,
-    L.removeRule({}, "b", 0).error, L.addRule({ rule: 1 }, "d", "x").error,
+    S.setSlot({}, "default", "x y").error, L.addRule({}, "d", "").error, L.addRule({}, "D", "x").error,
+    L.addRule({ rule: [{ profile: "d", name: "x" }] }, "d", "x").error, R.removeRule({ rule: [{ name: "a" }] }, 0, "{}").error,
+    R.removeRule({}, 0, "{}").error, L.addRule({ rule: 1 }, "d", "x").error,
     L.applyEdit(JSON.stringify({ layer: {} }), () => ({ ok: true, index: 0 })).error,
     L.checkRuleName(""), L.checkRuleName("-x"), L.checkRuleName("x".repeat(70)), L.checkProfile("A"),
     L.writeError({ error: "AccessDenied" }), L.writeError({}), L.writeError({ error: "org.freedesktop.DBus.Error.ServiceUnknown" }),
@@ -187,7 +187,7 @@ test("messages_are_plain", () => {
   for (const t of texts.filter((t) => t !== undefined && t !== "")) {
     assert.doesNotMatch(t, /serde|json|d-bus|dbus|polkit|systemctl|scdrd|sched_ext|eevdf|[{}]/i, t);
   }
-  assert.equal(L.removeRule({ rule: [{ name: "a" }] }, "b", 0).error, "Your rules changed elsewhere; refresh and try again.");
+  assert.equal(R.removeRule({ rule: [{ name: "a" }] }, 0, "{}").error, "Your rules changed elsewhere; refresh and try again.");
 });
 
 test("apply_edit_round_trip_and_size_limit", () => {
@@ -198,7 +198,11 @@ test("apply_edit_round_trip_and_size_limit", () => {
   assert.equal(doc.rule.length, 5);
   assert.equal(doc.sched_ext.power.performance, "lavd");
   assert.equal(JSON.parse(text).layer.rule.length, 4);
-  assert.equal(plain(L.applyEdit(text, () => L.setScheduler({}, "bad one"))).code, "BadScheduler");
+  assert.equal(plain(L.applyEdit(text, (layer) => S.setSlot(layer, "default", "bad one"))).code, "BadScheduler");
+  // The edit also gets the whole answer, for the files below the layer.
+  let seen = null;
+  L.applyEdit(text, (layer, doc) => { seen = doc; return { ok: true }; });
+  assert.equal(seen.base.profile.desktop !== undefined, true);
   assert.ok(L.applyEdit("{", () => ({ ok: true })).error);
   // Quotes double when the document is sent as a string argument, so the argument limit bites first.
   const rules = (n) => JSON.stringify({ layer: { rule: Array.from({ length: n }, (_, i) => ({ profile: "desktop", name: "app" + i })) } });
@@ -216,10 +220,10 @@ test("apply_edit_round_trip_and_size_limit", () => {
 });
 
 test("role_labels", () => {
-  assert.equal(L.roleLabel("foreground"), "The app you're using");
-  assert.equal(L.roleLabel("audio"), "Apps playing sound");
-  assert.equal(L.roleLabel("game"), "Games");
-  assert.equal(L.roleLabel("background"), "Apps in the background when the CPU is busy");
+  assert.equal(W.roleLabel("foreground"), "The app you're using");
+  assert.equal(W.roleLabel("audio"), "Apps playing sound");
+  assert.equal(W.roleLabel("game"), "Games");
+  assert.equal(W.roleLabel("background"), "Apps in the background when the CPU is busy");
 });
 
 test("agent_state_cases", () => {
@@ -277,26 +281,33 @@ test("confirms_match_plan", () => {
   const confirms = Object.fromEntries(commands().filter((c) => c.confirm).map((c) => [c.id, c.confirm]));
   assert.deepEqual(confirms, {
     "agent-off": "Stop following the focused window? The app you're using no longer gets a boost.",
+    "installer-install": "Install the extra CPU schedulers (scx-scheds and scx-tools)? Your package manager asks for your password.",
+    "installer-update": "Update the whole system, the schedulers included? Arch doesn't update one package alone.",
+    "installer-git": "Build the newest schedulers from the AUR (scx-scheds-git)? This can take several minutes.",
   });
   // The D-Bus writes that destroy or pause ask inside the page, with these texts.
-  assert.deepEqual(plain(L.CONFIRMS), {
+  assert.deepEqual(plain(W.CONFIRMS), {
     "pause": "Pause scdr? Every app's priority goes back to normal until you resume.",
     "rule-remove": "Remove your rule for %s?",
+    "profile-remove": "Delete the profile %s?",
+    "profile-revert": "Undo your changes to the profile %s?",
   });
-  assert.equal(L.confirmText("rule-remove", "steam*"), "Remove your rule for steam*?");
-  assert.equal(L.confirmText("rule-remove", "$&"), "Remove your rule for $&?");
-  assert.equal(L.confirmText("pause"), L.CONFIRMS.pause);
+  assert.equal(W.confirmText("rule-remove", "steam*"), "Remove your rule for steam*?");
+  assert.equal(W.confirmText("rule-remove", "$&"), "Remove your rule for $&?");
+  assert.equal(W.confirmText("pause"), W.CONFIRMS.pause);
 });
 
 test("dbus_writes_allowlisted", () => {
   const { methods, timeouts } = dbusTable();
   const reads = ["Status", "Processes", "Settings"];
-  const writes = ["Pause", "Resume", "SetRoleEnabled", "SetSettings"];
+  const writes = ["Pause", "Resume", "SetRoleEnabled", "SetSettings", "TryScheduler", "EndSchedulerTrial"];
   assert.deepEqual([...methods].sort(), [...reads, ...writes].sort());
   assert.deepEqual(Object.keys(timeouts).sort(), [...writes].sort());
   for (const w of writes) assert.equal(timeouts[w], 120000, w);
-  // Only the page's own commands run: reads of state, and the follow-focus and start switches.
-  assert.deepEqual(commands().map((c) => c.id), ["state", "agent-state", "agent-on", "agent-off", "start"]);
+  // Only the page's own commands run: reads of state, the follow-focus and start switches, and
+  // the scheduler installer.
+  assert.deepEqual(commands().map((c) => c.id), ["state", "agent-state", "agent-on", "agent-off", "start",
+    "installer-which", "installer-install", "installer-update", "installer-git"]);
 });
 
 test("manifest_text_is_plain", () => {
@@ -337,7 +348,7 @@ test("page_files_stay_small_and_unstyled", () => {
 
 test("rejects_hostile_values", () => {
   for (const bad of ["-rf", "a\nb", "a/b", "x".repeat(65), ""]) assert.equal(L.addRule({}, "desktop", bad).code, "BadName");
-  for (const bad of ["bpf land", "x:turbo", "eevdf:gaming", "a\nb"]) assert.equal(L.setScheduler({}, bad).code, "BadScheduler", bad);
+  for (const bad of ["bpf land", "x:turbo", "eevdf:gaming", "a\nb"]) assert.equal(S.setSlot({}, "default", bad).code, "BadScheduler", bad);
 });
 
 test("long_rule_names_can_be_removed", () => {
@@ -346,5 +357,5 @@ test("long_rule_names_can_be_removed", () => {
   const rule = plain(L.parseSettings(text)).layerRules[0];
   assert.equal(rule.name.length, 120);
   assert.equal(rule.rawName, name);
-  assert.equal(L.removeRule(JSON.parse(text).layer, rule.rawName, 0).ok, true);
+  assert.equal(R.removeRule(JSON.parse(text).layer, 0, rule.key).ok, true);
 });

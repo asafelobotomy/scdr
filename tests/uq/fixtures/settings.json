@@ -10,13 +10,23 @@
     ]
   },
   "base": {
-    "profile": { "desktop": {}, "game": {}, "background": {} },
+    "profile": {
+      "desktop": { "nice": -2, "io": "be:2", "_source": "/usr/share/scdr/scdr.toml" },
+      "game": { "inherit": "desktop", "nice": -5, "_source": "/usr/share/scdr/scdr.toml" },
+      "background": { "nice": 10, "_source": "/etc/scdr/rules.d/10-x.toml" }
+    },
+    "roles": { "foreground": "desktop", "game": "game", "power": { "power-saver": { "foreground": "" } } },
+    "sched_ext": { "default": "eevdf", "gaming": "lavd:gaming" },
+    "eevdf": { "preempt": "full", "base_slice_us": 3000 },
+    "pressure": { "high": 20.0, "low": 5.0 },
+    "system": { "iocost": true },
     "rule": [{ "profile": "background", "name": "baloo*", "_source": "/usr/share/scdr/scdr.toml" }]
   },
   "schedulers": [
     { "name": "bpfland", "description": "General purpose", "modes": ["auto", "gaming"], "installed": true },
     { "name": "lavd", "description": "Low latency", "modes": ["auto"], "installed": true },
-    { "name": "rusty", "description": "Multi-domain", "modes": ["auto"], "installed": false }
+    { "name": "rusty", "description": "Multi-domain", "modes": ["auto"], "installed": false },
+    { "name": "devbox", "description": "Built for low-end machines doing development", "modes": ["auto"], "installed": true }
   ],
   "scx_loader_error": null,
   "current_scheduler": "scx_bpfland:auto",

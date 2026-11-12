@@ -24,6 +24,8 @@ find "$widget" -type f | while read -r f; do
 done
 # The Scheduling page for uQ Settings (inert without uQ): the whole folder, nothing from tests/.
 install -Dm644 -t "$dest/usr/share/uq/settings/pages/scdr" uq/pages/scdr/*
+# The bar widget for uQ (inert without uQ): the whole folder.
+install -Dm644 -t "$dest/usr/share/uq/shell/widgets/scdr" uq/widgets/scdr/*
 install -Dm644 README.md "$dest/usr/share/doc/scdr/README.md"
 install -Dm644 DESIGN.md "$dest/usr/share/doc/scdr/DESIGN.md"
 install -Dm644 LICENSE "$dest/usr/share/licenses/scdr/LICENSE"

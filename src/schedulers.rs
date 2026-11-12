@@ -1,5 +1,5 @@
 //! The sched_ext schedulers the widget's Schedulers page lists: what
-//! scx_loader supports, whether each binary is installed, and a short
+//! scx_loader supports (plus scx_devbox), whether each binary is installed, and a short
 //! description for the well-known ones.
 
 use crate::config::policy::MODES;
@@ -17,7 +17,21 @@ pub struct SchedulerInfo {
 }
 
 /// `supported` comes from scx_loader: full names and configured mode numbers.
+/// scx_devbox, which scdr runs from its own unit, is added when installed.
 pub fn inventory(supported: Vec<(String, Vec<u32>)>) -> Vec<SchedulerInfo> {
+    let mut out = from_loader(supported);
+    if crate::policy::devbox::installed() && !out.iter().any(|s| s.name == "devbox") {
+        out.push(SchedulerInfo {
+            name: "devbox".into(),
+            installed: true,
+            modes: vec![MODES[0]],
+            description: describe("devbox"),
+        });
+    }
+    out
+}
+
+fn from_loader(supported: Vec<(String, Vec<u32>)>) -> Vec<SchedulerInfo> {
     supported
         .into_iter()
         .map(|(full, modes)| {
@@ -51,6 +65,7 @@ fn describe(name: &str) -> Option<&'static str> {
         "flash" => "Earliest-deadline-first, aiming for fair and predictable latency.",
         "cosmos" => "Lightweight and general-purpose, keeping tasks close to their caches.",
         "p2dq" => "Pick-two load balancing over per-domain queues; versatile.",
+        "devbox" => "Built for low-end machines doing development with LLM agent apps; follows scdr's focus hints. Runs from its own unit, not scx_loader.",
         "tickless" => "Cuts timer ticks on busy CPUs; meant for server and HPC work.",
         _ => return None,
     })
@@ -60,7 +75,7 @@ fn describe(name: &str) -> Option<&'static str> {
 mod tests {
     #[test]
     fn names_and_modes() {
-        let inv = super::inventory(vec![("scx_bpfland".into(), vec![0, 1]), ("scx_new".into(), vec![])]);
+        let inv = super::from_loader(vec![("scx_bpfland".into(), vec![0, 1]), ("scx_new".into(), vec![])]);
         assert_eq!(inv[0].name, "bpfland");
         assert_eq!(inv[0].modes, vec!["auto", "gaming"]);
         assert!(inv[0].description.is_some());

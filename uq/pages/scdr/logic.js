@@ -12,12 +12,6 @@ var MAX_ARGS_JSON = 16 * 1024;
 var MAX_ROWS = 500;
 var MAX_TEXT = 200;
 
-// Questions the page asks itself before a D-Bus write (uQ asks for [[command]]s on its own).
-var CONFIRMS = {
-    "pause": "Pause scdr? Every app's priority goes back to normal until you resume.",
-    "rule-remove": "Remove your rule for %s?"
-};
-
 var MESSAGES = {
     BadScheduler: "That isn't a scheduler scdr knows.",
     BadName: "Use letters, numbers, spaces and . _ + * ? @ - only, starting with a letter or number. 64 characters at most.",
@@ -142,6 +136,25 @@ function describeRule(rule) {
     return clip(parts.join("; ") || "everything", 120);
 }
 
+var POWER_PROFILES = ["power-saver", "balanced", "performance"];
+var KEY = "^[A-Za-z0-9_-]{1,64}$";
+
+function conditionsOf(rule) {
+    var out = [];
+    for (var i = 0; i < CONDITIONS.length; i++) {
+        var v = rule[CONDITIONS[i]];
+        if (v !== undefined)
+            out.push({ field: CONDITIONS[i], text: clip(Array.isArray(v) ? v.join(", ") : String(v), 1000) });
+    }
+    return out;
+}
+
+function trialOf(t) {
+    if (!isObject(t) || typeof t.trying !== "string")
+        return null;
+    return { trying: choiceLabel(t.trying), was: choiceLabel(typeof t.was === "string" ? t.was : "eevdf") };
+}
+
 function parseSettings(text) {
     var p = parseJson(text);
     if (p.error || !isObject(p.value))
@@ -159,10 +172,12 @@ function parseSettings(text) {
         var simple = name !== null && Object.keys(r).length === 2 && typeof r.profile === "string";
         rules.push({
             index: i,
+            key: JSON.stringify(r),
             name: clip(name !== null ? name : describeRule(r), 120),
             rawName: name !== null ? name : "",
             profile: clip(r.profile),
-            simple: simple
+            simple: simple,
+            conditions: conditionsOf(r)
         });
     }
     var names = {};
@@ -170,43 +185,100 @@ function parseSettings(text) {
         if (isObject(t))
             Object.keys(t).forEach(function (k) { names[k] = true; });
     });
-    var schedulers = [{ value: "eevdf", label: "Kernel default" }];
-    (Array.isArray(s.schedulers) ? s.schedulers : []).forEach(function (sc) {
-        if (!isObject(sc) || sc.installed !== true || typeof sc.name !== "string")
+    var installed = [];
+    var cards = [];
+    (Array.isArray(s.schedulers) ? s.schedulers : []).slice(0, 64).forEach(function (sc) {
+        if (!isObject(sc) || typeof sc.name !== "string" || !new RegExp(KEY).test(sc.name))
             return;
-        (Array.isArray(sc.modes) && sc.modes.length ? sc.modes : ["auto"]).forEach(function (m) {
+        var modes = (Array.isArray(sc.modes) ? sc.modes : []).filter(function (m) {
+            return typeof m === "string" && new RegExp(KEY).test(m);
+        });
+        if (modes.length === 0)
+            modes = ["auto"];
+        cards.push({ name: sc.name, installed: sc.installed === true, modes: modes,
+                     description: clip(typeof sc.description === "string" ? sc.description : "", 400) });
+        if (sc.installed !== true)
+            return;
+        modes.forEach(function (m) {
             var value = m === "auto" ? sc.name : sc.name + ":" + m;
-            schedulers.push({ value: clip(value, 80), label: choiceLabel(value) });
+            installed.push({ value: clip(value, 80), label: choiceLabel(value) });
         });
     });
+    var power = (Array.isArray(s.power_profiles) ? s.power_profiles : POWER_PROFILES).filter(function (x) {
+        return typeof x === "string" && new RegExp(KEY).test(x);
+    }).slice(0, 8);
     var le = isObject(layer.sched_ext) ? layer.sched_ext : {};
     var be = isObject(base.sched_ext) ? base.sched_ext : {};
-    var enabled = le.enable !== undefined ? le.enable === true : be.enable === true;
-    var chosen = normChoice(le.default !== undefined ? le.default : be.default);
-    var choice = !enabled || chosen === "" ? "eevdf" : chosen;
-    if (!schedulers.some(function (x) { return x.value === choice; }))
-        schedulers.push({ value: choice, label: choiceLabel(choice) + " (not installed)" });
     return {
+        layer: layer,
+        base: base,
         layerRules: rules,
         profiles: Object.keys(names).sort(),
-        schedulers: schedulers,
+        installed: installed,
+        cards: cards,
+        powerProfiles: power,
+        schedExt: le.enable !== undefined ? le.enable === true : be.enable === true,
         currentScheduler: typeof s.current_scheduler === "string" ? choiceLabel(s.current_scheduler) : "",
-        choice: choice,
+        trial: trialOf(s.trial),
         loaderError: typeof s.scx_loader_error === "string" ? clip(s.scx_loader_error, 400) : ""
     };
 }
 
-// ---- Edits to the settings layer (same rules as scdr's own settings) ------------------
+// ---- Values in the settings, by path (as the Plasma widget's SettingsStore) ------------
 
-function setScheduler(layer, choice) {
-    if (typeof choice !== "string" || !new RegExp(CHOICE).test(choice))
-        return fail("BadScheduler");
-    if (!isObject(layer.sched_ext))
-        layer.sched_ext = {};
-    layer.sched_ext.enable = choice !== "eevdf";
-    layer.sched_ext.default = choice;
+// The value at `path` (a list of keys) in `obj`, or undefined.
+function lookup(obj, path) {
+    var v = obj;
+    for (var i = 0; i < path.length; i++) {
+        if (!isObject(v) || !Object.prototype.hasOwnProperty.call(v, path[i]))
+            return undefined;
+        v = v[path[i]];
+    }
+    return v;
+}
+
+function badPath(path) {
+    if (!Array.isArray(path) || path.length === 0 || path.length > 8)
+        return true;
+    return path.some(function (k) {
+        return typeof k !== "string" || !new RegExp(KEY).test(k) || k === "__proto__" || k === "constructor" || k === "prototype";
+    });
+}
+
+// Sets `value` at `path` in the layer. undefined (or null) removes it, so the files below
+// apply again, along with any table it leaves empty.
+function setPath(layer, path, value) {
+    if (badPath(path) || !isObject(layer))
+        return fail("Unreadable");
+    var remove = value === undefined || value === null;
+    var obj = layer;
+    var parents = [];
+    for (var i = 0; i < path.length - 1; i++) {
+        var k = path[i];
+        if (!isObject(obj[k])) {
+            if (remove)
+                return { ok: true };
+            obj[k] = {};
+        }
+        parents.push([obj, k]);
+        obj = obj[k];
+    }
+    var last = path[path.length - 1];
+    if (!remove) {
+        obj[last] = value;
+        return { ok: true };
+    }
+    delete obj[last];
+    for (var j = parents.length - 1; j >= 0; j--) {
+        var parent = parents[j][0], key = parents[j][1];
+        if (Object.keys(parent[key]).length !== 0)
+            break;
+        delete parent[key];
+    }
     return { ok: true };
 }
+
+// ---- Edits to the settings layer (same rules as scdr's own settings) ------------------
 
 function addRule(layer, profile, name) {
     if (checkRuleName(name) !== "")
@@ -224,17 +296,6 @@ function addRule(layer, profile, name) {
     return { ok: true, index: rules.length - 1 };
 }
 
-function removeRule(layer, name, index) {
-    if (!Array.isArray(layer.rule) || typeof index !== "number" || index < 0 || index >= layer.rule.length)
-        return fail("NoSuchRule");
-    if (ruleNameOf(layer.rule[index]) !== name)
-        return fail("Changed");
-    layer.rule.splice(index, 1);
-    if (layer.rule.length === 0)
-        delete layer.rule;
-    return { ok: true };
-}
-
 function utf8Length(s) {
     try {
         return unescape(encodeURIComponent(s)).length;
@@ -243,14 +304,15 @@ function utf8Length(s) {
     }
 }
 
-// Re-reads the `Settings` answer, lets `edit(layer)` change a copy of the layer, and returns
+// Re-reads the `Settings` answer, lets `edit(layer, settings)` change a copy of the layer
+// (`settings` is the whole answer, for the files below it), and returns
 // {doc} (the text to send to SetSettings) or {error}. Refuses a document uQ couldn't pass on.
 function applyEdit(settingsText, edit) {
     var p = parseJson(settingsText);
     if (p.error || !isObject(p.value))
         return { error: "scdr's settings couldn't be read." };
     var layer = isObject(p.value.layer) ? JSON.parse(JSON.stringify(p.value.layer)) : {};
-    var res = edit(layer);
+    var res = edit(layer, p.value);
     if (res.error)
         return res;
     var doc = JSON.stringify(layer);
@@ -271,36 +333,6 @@ function checkRuleName(s) {
 
 function checkProfile(s) {
     return typeof s === "string" && new RegExp(PROFILE).test(s) ? "" : MESSAGES.BadProfile;
-}
-
-// ---- Words ----------------------------------------------------------------------------
-
-function roleLabel(role) {
-    switch (role) {
-    case "foreground": return "The app you're using";
-    case "audio": return "Apps playing sound";
-    case "game": return "Games";
-    case "background": return "Apps in the background when the CPU is busy";
-    default: return clip(role, 60);
-    }
-}
-
-function confirmText(id, arg) {
-    var t = CONFIRMS[id] || "";
-    return t.split("%s").join(arg === undefined ? "" : String(arg));
-}
-
-function pressureText(state) {
-    return state && state.cpuPressure !== null ? "CPU busy: " + Math.round(state.cpuPressure) + " %" : "";
-}
-
-function managedText(state) {
-    var n = state ? state.managed : 0;
-    return n + (n === 1 ? " app managed" : " apps managed");
-}
-
-function boostedLine(b) {
-    return b.name + " — " + b.profile;
 }
 
 // `systemctl --user is-enabled` as {code, output}: true, false, or null when unknown

@@ -19,14 +19,49 @@ label = "Boost the app you use, audio and games"
 keywords = ["focus", "foreground", "game", "audio", "background", "boost"]
 
 [[setting]]
+id = "role-profiles"
+label = "Profile each role gives"
+keywords = ["role", "profile", "power", "foreground", "audio", "game", "background"]
+
+[[setting]]
 id = "scheduler"
 label = "CPU scheduler"
-keywords = ["scheduler", "sched_ext", "scx", "bpfland", "lavd", "eevdf"]
+keywords = ["scheduler", "sched_ext", "scx", "bpfland", "lavd", "devbox", "eevdf", "gaming", "power"]
+
+[[setting]]
+id = "available-schedulers"
+label = "Available schedulers"
+keywords = ["try", "trial", "install", "update", "git", "scx-scheds", "devbox"]
+
+[[setting]]
+id = "kernel-tuning"
+label = "Kernel scheduler tuning"
+keywords = ["eevdf", "preempt", "preemption", "slice", "latency"]
+
+[[setting]]
+id = "pressure"
+label = "Background apps when the CPU is busy"
+keywords = ["pressure", "psi", "background", "threshold", "hold"]
+
+[[setting]]
+id = "system"
+label = "System-wide switches"
+keywords = ["iocost", "autogroup", "disk", "io", "weight"]
+
+[[setting]]
+id = "profiles"
+label = "Profiles"
+keywords = ["profile", "nice", "ionice", "io", "policy", "uclamp", "weight", "oom", "slice", "inherit"]
 
 [[setting]]
 id = "rules"
 label = "Your app rules"
-keywords = ["rule", "priority", "app", "nice"]
+keywords = ["rule", "priority", "app", "nice", "condition", "exe", "cmdline", "cgroup", "uid"]
+
+[[setting]]
+id = "file-rules"
+label = "Rules from scdr's files"
+keywords = ["rule", "shipped", "etc", "ananicy"]
 
 [[setting]]
 id = "follow-focus"
@@ -36,16 +71,17 @@ keywords = ["agent", "session", "focus", "window"]
 [requires]
 bins = ["scdrctl"]
 
-# Writes (Pause, Resume, SetRoleEnabled, SetSettings) may wait for the person's password, so they
-# get the longest deadline. Pause and removing a rule ask first inside the page (ConfirmDialog.qml).
+# Writes (Pause, Resume, SetRoleEnabled, SetSettings, TryScheduler, EndSchedulerTrial) may wait for
+# the person's password, so they get the longest deadline. Pause, removing a rule and deleting or
+# undoing a profile ask first inside the page (ConfirmDialog.qml).
 [dbus]
 name = "org.scdr.Daemon1"
 path = "/org/scdr/Daemon1"
 interface = "org.scdr.Daemon1"
-methods = ["Status", "Processes", "Settings", "Pause", "Resume", "SetRoleEnabled", "SetSettings"]
+methods = ["Status", "Processes", "Settings", "Pause", "Resume", "SetRoleEnabled", "SetSettings", "TryScheduler", "EndSchedulerTrial"]
 properties = ["State"]
 bus = "system"
-timeout_ms = { Pause = 120000, Resume = 120000, SetRoleEnabled = 120000, SetSettings = 120000 }
+timeout_ms = { Pause = 120000, Resume = 120000, SetRoleEnabled = 120000, SetSettings = 120000, TryScheduler = 120000, EndSchedulerTrial = 120000 }
 
 # The State property, read with busctl so uQ can follow its PropertiesChanged signal.
 [[command]]
@@ -81,3 +117,34 @@ id = "start"
 argv = ["/usr/bin/systemctl", "enable", "--now", "scdrd.service"]
 output = "none"
 timeout_ms = 120000
+
+# More schedulers through the system's own package tools (src/bin/scdrctl/install.rs): `which`
+# prints pamac, packagekit or terminal; the others open that installer, which asks for the
+# password itself, and end when it does. A terminal stays open until the person closes it, so
+# these get the longest deadline.
+[[command]]
+id = "installer-which"
+argv = ["/usr/bin/scdrctl", "schedulers", "which"]
+output = "text"
+timeout_ms = 5000
+
+[[command]]
+id = "installer-install"
+argv = ["/usr/bin/scdrctl", "schedulers", "install"]
+output = "none"
+timeout_ms = 600000
+confirm = "Install the extra CPU schedulers (scx-scheds and scx-tools)? Your package manager asks for your password."
+
+[[command]]
+id = "installer-update"
+argv = ["/usr/bin/scdrctl", "schedulers", "update"]
+output = "none"
+timeout_ms = 600000
+confirm = "Update the whole system, the schedulers included? Arch doesn't update one package alone."
+
+[[command]]
+id = "installer-git"
+argv = ["/usr/bin/scdrctl", "schedulers", "git"]
+output = "none"
+timeout_ms = 600000
+confirm = "Build the newest schedulers from the AUR (scx-scheds-git)? This can take several minutes."

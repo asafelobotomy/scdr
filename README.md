@@ -157,6 +157,14 @@ Changes ask for the `org.scdr.control` password, as in the Plasma widget; pausin
 rule ask you to confirm first. To try the page without installing it:
 `uq-settings --plugin-dir uq/pages`.
 
+It also adds a **bar widget** (`uq/widgets/scdr/`, shown while scdrd runs): a small CPU icon
+with a sparkline of CPU pressure, or two bars while paused. Clicking it opens a popup with the
+state, the active scheduler and power profile, a Pause/Resume button, the per-role switches, what
+is boosted now, and the Plasma widget's live graphs (the focused app's wait to run, tasks
+scheduled per second, pressure and the CPU frequency target; the first two need scx_devbox). The
+widget keeps three minutes of history while the popup is closed. Its D-Bus calls end after 2 s, so
+while polkit waits for the password the popup says so and follows the change through `State`.
+
 ## Using it
 
 ```sh

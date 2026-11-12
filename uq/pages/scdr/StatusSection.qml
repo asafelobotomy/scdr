@@ -3,7 +3,7 @@ import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.uq.settings
-import "logic.js" as Logic
+import "words.js" as Words
 
 ColumnLayout {
     required property var host
@@ -23,7 +23,7 @@ ColumnLayout {
             text: host.ready && host.view.state.paused ? "Resume" : "Pause"
             onClicked: host.ready && host.view.state.paused
                 ? host.write("status", "Resume", [])
-                : host.confirmDialog.ask(Logic.confirmText("pause"), () => host.write("status", "Pause", []))
+                : host.confirmDialog.ask(Words.confirmText("pause"), () => host.write("status", "Pause", []))
         }
         QQC2.Button {
             visible: host.down
@@ -34,7 +34,7 @@ ColumnLayout {
     }
     UqLabel {
         visible: host.ready
-        text: [Logic.pressureText(host.view.state), Logic.managedText(host.view.state)].filter(s => s).join(" · ")
+        text: [Words.pressureText(host.view.state), Words.managedText(host.view.state)].filter(s => s).join(" · ")
         color: host.mutedColor
         Layout.fillWidth: true
     }

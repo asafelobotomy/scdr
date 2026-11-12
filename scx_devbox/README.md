@@ -62,9 +62,13 @@ cgroup's weight later updates that cgroup only, not descendants that already
 exist, and weights count against the default 100 rather than against siblings.
 scdr sets weights on leaf-ish units, where this makes no difference.
 
-scdr's own `[sched_ext]` switching goes through scx_loader, which only knows
-the stock schedulers. Leave it off (the default) while scx_devbox runs; scdr's
-rules, roles and pressure handling keep working underneath.
+scdr's own `[sched_ext]` switching knows scx_devbox: pick `devbox` as a
+choice (`default = "devbox"`, per power profile, or from the Scheduling page
+and the Plasma widget) and scdr starts and stops `scx_devbox.service` itself,
+stopping scx_loader's scheduler first. Then don't enable the unit as well: scdr
+starts it when its choice says so. With `[sched_ext]` off, run the unit by hand
+as below; scdr's rules, roles and pressure handling keep working underneath
+either way.
 
 ## Results
 

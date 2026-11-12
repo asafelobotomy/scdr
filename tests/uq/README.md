@@ -1,9 +1,12 @@
 # Tests for the uQ Settings page (`uq/pages/scdr/`)
 
-- `logic.test.mjs`, `load-logic.mjs`, `fixtures/`: Node tests of `logic.js` and the manifest.
+- `logic.test.mjs`, `editors.test.mjs`, `load-logic.mjs`, `fixtures/`: Node tests of the page's
+  `.js` files (`logic.js`, `words.js`, `schedulers.js`, `profiles.js`, `rules.js`) and the manifest.
   Run: `node --test 'tests/uq/*.test.mjs'` (Node 22; the quotes matter, a bare directory fails).
-- `tst_page.qml` with `FakeContext.qml` and `stub/`: the page offscreen, no uQ needed.
-  Run: `QT_QPA_PLATFORM=offscreen qmltestrunner -import tests/uq/stub -input tests/uq`.
+- `tst_page.qml` and `tst_editors.qml`, sharing `PageHarness.qml` (the page in a Loader with a
+  `FakeContext.qml`), with `stub/`: the page offscreen, no uQ needed.
+  Run: `QT_QPA_PLATFORM=offscreen qmltestrunner -import tests/uq/stub -input tests/uq`
+  (`/usr/lib/qt6/bin/qmltestrunner` on Arch; `/usr/bin/qmltestrunner` may be Qt 5's).
   CI runs it (the `uq` job); `tst_components.qml` checks the stub itself.
 - `install_test.sh`: the package installs exactly the page's files.
 

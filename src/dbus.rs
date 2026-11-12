@@ -221,7 +221,7 @@ async fn settings_json(d: &Daemon, conn: &zbus::Connection) -> zbus::fdo::Result
     let failed = |e: crate::config::ConfigError| zbus::fdo::Error::Failed(e.to_string());
     let (schedulers, scx_error) = match policy::supported_schedulers(conn).await {
         Ok(s) => (crate::schedulers::inventory(s), None),
-        Err(e) => (Vec::new(), Some(e.to_string())),
+        Err(e) => (crate::schedulers::inventory(Vec::new()), Some(e.to_string())),
     };
     let current = policy::current_scheduler(conn).await.ok().map(|c| c.to_string());
     let trial = d.trial.lock().unwrap().as_ref().map(|(t, w)| (t.to_string(), w.to_string()));

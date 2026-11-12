@@ -1,12 +1,16 @@
-// The Scheduling page for uQ Settings: scdr's state, its boosts, the CPU scheduler, the person's
-// own app rules and the focus agent. Reads follow scdr's State (watched); changes go over D-Bus
-// with long deadlines, since they may wait for a password. Pure logic is in logic.js; every
-// piece of text goes through UqLabel.
+// The Scheduling page for uQ Settings: scdr's state, its boosts and the profile each role gives,
+// the focus agent, the CPU scheduler (with trials and the installer), the kernel scheduler's
+// knobs, CPU pressure, profiles, and rules. Same settings as the Plasma widget's pages. Reads
+// follow scdr's State (watched); every change is applied at once over D-Bus, with long deadlines
+// since it may wait for a password. Pure logic is in the .js files; every piece of text goes
+// through UqLabel.
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.uq.settings
 import "logic.js" as Logic
+import "rules.js" as Rules
+import "words.js" as Words
 
 Item {
     id: page
@@ -27,7 +31,8 @@ Item {
     property var problems: ({})
     property bool showAdvanced: false
     property var profileNames: []
-    property var schedulerLabels: []
+    // Goes up with every read of the settings, so controls that snapped back show them again.
+    property int revision: 0
     property string ruleCheck: ""
     // Callbacks that arrive after the page is gone do nothing.
     property var life: ({ alive: true })
@@ -42,7 +47,10 @@ Item {
     readonly property string advancedText: [view.detail, settings ? settings.loaderError : "", settingsDown ? "" : settingsError]
         .filter(s => s).join("\n")
     readonly property var sections: ({ "status": statusSection, "roles": rolesSection, "follow-focus": followSection,
-                                        "scheduler": schedulerSection, "rules": rulesSection })
+                                        "role-profiles": roleProfilesSection, "scheduler": schedulerSection,
+                                        "available-schedulers": availableSection, "kernel-tuning": kernelSection,
+                                        "pressure": pressureSection, "system": pressureSection.systemRow,
+                                        "profiles": profilesSection, "rules": rulesSection, "file-rules": fileRulesSection })
 
     function live(fn) {
         const life = page.life;
@@ -109,14 +117,11 @@ Item {
         if (s.error)
             return;
         page.settings = s;
+        page.revision++;
         if (JSON.stringify(s.profiles) !== JSON.stringify(page.profileNames)) {
             page.profileNames = s.profiles;
             rulesSection.profile.currentIndex = Math.max(0, s.profiles.indexOf("desktop"));
         }
-        const labels = s.schedulers.map(x => x.label);
-        if (JSON.stringify(labels) !== JSON.stringify(page.schedulerLabels))
-            page.schedulerLabels = labels;
-        page.syncScheduler();
         if (page.highlight !== "")
             Qt.callLater(page.scrollTo, page.highlight);
     }
@@ -135,13 +140,7 @@ Item {
         page.ctx.command.watch("state", page.live(page.onState));
         page.ctx.command.watch("agent-state", page.live(page.onAgent));
         page.ctx.dbus.call("Settings", [], page.live(page.onSettings));
-    }
-
-    function syncScheduler() {
-        if (!page.settings)
-            return;
-        const i = page.settings.schedulers.findIndex(x => x.value === page.settings.choice);
-        schedulerSection.combo.currentIndex = i < 0 ? 0 : i;
+        availableSection.findInstaller();
     }
 
     // ---- Changes ----
@@ -167,7 +166,8 @@ Item {
         }));
     }
 
-    // Reads Settings again, changes a copy of the layer, and sends it back.
+    // Reads Settings again, lets `change(layer, settings)` change a copy of the layer, and sends
+    // it back; `after` runs once it is saved.
     function edit(area, change, after) {
         page.busy = area;
         page.setProblem(area, "");
@@ -190,13 +190,6 @@ Item {
         }));
     }
 
-    function setScheduler(index) {
-        const choice = page.settings.schedulers[index].value;
-        if (choice === page.settings.choice)
-            return;
-        page.edit("scheduler", layer => Logic.setScheduler(layer, choice));
-    }
-
     function addRule() {
         const profile = page.profileNames[rulesSection.profile.currentIndex] || "";
         page.ruleCheck = Logic.checkRuleName(rulesSection.field.text);
@@ -211,8 +204,11 @@ Item {
         });
     }
 
-    function removeRule(shown, name, index) {
-        confirm.ask(Logic.confirmText("rule-remove", shown), () => page.edit("rules", layer => Logic.removeRule(layer, name, index)));
+    // `rule` is an entry of settings.layerRules.
+    function removeRule(rule) {
+        const index = rule.index;
+        const key = rule.key;
+        confirm.ask(Words.confirmText("rule-remove", rule.name), () => page.edit("rules", layer => Rules.removeRule(layer, index, key)));
     }
 
     function setAgent(on) {
@@ -275,12 +271,36 @@ Item {
                 id: followSection
                 host: page
             }
+            RoleProfilesSection {
+                id: roleProfilesSection
+                host: page
+            }
             SchedulerSection {
                 id: schedulerSection
                 host: page
             }
+            AvailableSection {
+                id: availableSection
+                host: page
+            }
+            KernelSection {
+                id: kernelSection
+                host: page
+            }
+            PressureSection {
+                id: pressureSection
+                host: page
+            }
+            ProfilesSection {
+                id: profilesSection
+                host: page
+            }
             RulesSection {
                 id: rulesSection
+                host: page
+            }
+            FileRulesSection {
+                id: fileRulesSection
                 host: page
             }
             // ---- Advanced details ----

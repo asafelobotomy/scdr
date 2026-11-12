@@ -1,11 +1,13 @@
 //! System-wide scheduler policy: which sched_ext scheduler runs (through
-//! scx_loader), and EEVDF's own knobs while none does. Both are restored on
+//! scx_loader, or scx_devbox's own unit), and EEVDF's own knobs while none does. Both are restored on
 //! shutdown, and a scheduler someone picks by hand is left running until
 //! scdr's own choice changes.
 
 use crate::config::{Eevdf, EevdfConfig, SchedChoice, SchedExt};
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+pub mod devbox;
 
 /// Set when a scheduler trial from the widget ends; the main loop then
 /// calls [`Policy::forget_override`] before its next sync.
@@ -75,8 +77,8 @@ impl Policy {
     }
 
     async fn sync_scx(&mut self, bus: &zbus::Connection, want: SchedChoice) -> String {
-        let loader = match loader(bus).await {
-            Ok(l) => l,
+        let current = match current_on(bus).await {
+            Ok(c) => c,
             Err(e) => {
                 let msg = format!("sched_ext: scx_loader unavailable ({e}); install scx-tools");
                 if self.scx_error.as_deref() != Some(&msg) {
@@ -87,11 +89,8 @@ impl Policy {
             }
         };
         self.scx_error = None;
-        let Ok(current) = current(&loader).await else {
-            return "sched_ext: can't read scx_loader state".into();
-        };
-        // A scheduler scx_loader didn't start (e.g. scx_devbox from its own
-        // unit): scx_loader reports none, but switching would fight it.
+        // A scheduler neither scx_loader nor scdr started: scx_loader
+        // reports none, but switching would fight it.
         if let Some(line) = external_scheduler(&current, crate::system::sched_ext().as_ref()) {
             return line;
         }
@@ -108,7 +107,7 @@ impl Policy {
         self.scx_overridden = None;
 
         if current != want {
-            match switch(&loader, &want).await {
+            match switch_on(bus, &want).await {
                 Ok(()) => tracing::info!("sched_ext: {current} -> {want}"),
                 Err(e) => {
                     tracing::warn!("sched_ext: can't switch to {want}: {e}");
@@ -124,15 +123,14 @@ impl Policy {
         let (Some(applied), Some(original)) = (self.scx_applied.take(), self.scx_original.clone()) else {
             return;
         };
-        let Ok(loader) = loader(bus).await else { return };
-        let now = current(&loader).await.ok();
+        let now = current_on(bus).await.ok();
         // Never start one over a scheduler someone else loaded meanwhile.
         if let Some(line) = now.as_ref().and_then(|c| external_scheduler(c, crate::system::sched_ext().as_ref())) {
             tracing::info!("not restoring {original}: {line}");
             return;
         }
         if now.as_ref() == Some(&applied) && applied != original {
-            match switch(&loader, &original).await {
+            match switch_on(bus, &original).await {
                 Ok(()) => tracing::info!("sched_ext: restored {original}"),
                 Err(e) => tracing::warn!("sched_ext: can't restore {original}: {e}"),
             }
@@ -192,13 +190,40 @@ impl Policy {
     }
 }
 
-/// The scheduler scx_loader runs now (`Eevdf` for none).
+/// The scheduler running now: scx_devbox, or what scx_loader runs (`Eevdf`
+/// for none).
 pub async fn current_scheduler(bus: &zbus::Connection) -> zbus::Result<SchedChoice> {
+    current_on(bus).await
+}
+
+/// Switches schedulers; scdr's policy treats it as a hand pick.
+pub async fn switch_scheduler(bus: &zbus::Connection, to: &SchedChoice) -> zbus::Result<()> {
+    switch_on(bus, to).await
+}
+
+async fn current_on(bus: &zbus::Connection) -> zbus::Result<SchedChoice> {
+    if devbox::running() {
+        return Ok(devbox::choice());
+    }
     current(&loader(bus).await?).await
 }
 
-/// Switches through scx_loader; scdr's policy treats it as a hand pick.
-pub async fn switch_scheduler(bus: &zbus::Connection, to: &SchedChoice) -> zbus::Result<()> {
+/// scx_devbox runs from its own unit; everything else through scx_loader.
+async fn switch_on(bus: &zbus::Connection, to: &SchedChoice) -> zbus::Result<()> {
+    if devbox::is(to) {
+        if let Ok(loader) = loader(bus).await {
+            if current(&loader).await.is_ok_and(|c| c != SchedChoice::Eevdf) {
+                loader.stop_scheduler().await?;
+            }
+        }
+        return devbox::start(bus).await;
+    }
+    if devbox::running() {
+        devbox::stop(bus).await?;
+        if *to == SchedChoice::Eevdf {
+            return Ok(());
+        }
+    }
     switch(&loader(bus).await?, to).await
 }
 

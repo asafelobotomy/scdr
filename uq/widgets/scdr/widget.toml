@@ -1,0 +1,23 @@
+# uQ bar widget for scdr: an icon in the Status island whose popup shows scdr's state, live
+# graphs and quick switches. Installed to /usr/share/uq/shell/widgets/scdr/ by scdr's package;
+# inert without uQ. Reference: docs/integrating.md ("Widgets") in the uQ repository.
+uq_api = 1
+id = "scdr"
+name = "Scheduling"
+slot = "bar"
+qml = "Widget.qml"
+order = 60
+
+# Shown only while scdrd owns its name on the system bus.
+[requires]
+bus_name = "org.scdr.Daemon1"
+
+# Pause, Resume and SetRoleEnabled ask polkit, which may wait for the password longer than a
+# widget's 2 s call deadline; the widget then follows the change through State.
+[dbus]
+name = "org.scdr.Daemon1"
+path = "/org/scdr/Daemon1"
+interface = "org.scdr.Daemon1"
+methods = ["Pause", "Resume", "SetRoleEnabled"]
+properties = ["State"]
+bus = "system"
