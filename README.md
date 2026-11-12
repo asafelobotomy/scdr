@@ -145,6 +145,18 @@ to `/var/lib/scdr/settings.toml`, the highest-precedence layer, and reloads.
 Your files in `/etc/scdr` are never rewritten; delete `settings.toml` to drop
 everything set in the widget.
 
+## uQ desktop
+
+On [uQ](https://github.com/asafelobotomy/uq), the package adds a **Scheduling** page to
+Settings → Apps (`uq/pages/scdr/`; it does nothing without uQ). It shows whether scdr is running,
+pauses and resumes it, switches each boost on or off, picks the CPU scheduler, lists and edits
+your own app rules, and turns "follow the focused window" on or off. It updates when scdr's state
+changes.
+
+Changes ask for the `org.scdr.control` password, as in the Plasma widget; pausing and removing a
+rule ask you to confirm first. To try the page without installing it:
+`uq-settings --plugin-dir uq/pages`.
+
 ## Using it
 
 ```sh
