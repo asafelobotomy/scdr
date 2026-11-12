@@ -28,6 +28,7 @@ pkgname = scdr-git
 	optdepends = pipewire: audio-client role (pw-dump)
 	optdepends = gamemode: game role
 	optdepends = power-profiles-daemon: per-power-profile roles
+	optdepends = uq: the Scheduling page in uQ Settings
 	provides = scdr
 	conflicts = scdr
 
