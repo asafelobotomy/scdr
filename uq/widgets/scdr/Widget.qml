@@ -22,11 +22,28 @@ Item {
     property string busy: ""
     property string problem: ""
     property bool getting: false
+    // Whether the popup shows, and when it last closed. The shell closes it on a press outside
+    // it, the icon included, before the click arrives: a click right after a close was meant to
+    // close it, not to open it again.
+    property bool popupShown: false
+    property real popupClosedAt: 0
 
     property Component popup: Component {
         Details {
             w: root
+            Component.onCompleted: root.popupShown = true
+            Component.onDestruction: {
+                root.popupShown = false;
+                root.popupClosedAt = Date.now();
+            }
         }
+    }
+
+    function togglePopup() {
+        if (popupShown)
+            ctx.closePopup();
+        else if (Date.now() - popupClosedAt > 300)
+            ctx.openPopup();
     }
 
     function ingest(text) {
@@ -186,12 +203,12 @@ Item {
 
     Accessible.role: Accessible.Button
     Accessible.name: "Scheduling: " + L.statusLabel(scdr, pending) + ", " + scheduler.name
-    Accessible.onPressAction: ctx.openPopup()
+    Accessible.onPressAction: togglePopup()
 
     MouseArea {
         id: mouse
         anchors.fill: parent
         hoverEnabled: true
-        onClicked: root.ctx.openPopup()
+        onClicked: root.togglePopup()
     }
 }
