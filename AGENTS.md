@@ -18,7 +18,8 @@ Process scheduling and priority daemon (`scdrd`) and control tool (`scdrctl`) fo
 ## Conventions
 - No source file over 400 lines, tests included; `tests/file_length.rs` enforces it. Split into a module directory (`foo/mod.rs` + `foo/bar.rs`).
 - Run `cargo clippy --all-targets` and `cargo test` before committing.
-- Rust edition 2024, MSRV 1.85, MPL-2.0. Work on `main`. CI (`ci.yml`) runs clippy and tests. Pushing a `vX.Y.Z` tag runs `release.yml`: it uploads a source archive, builds the AUR package from it and keeps the AUR files (real checksum, `.SRCINFO`) as the `aur` artifact. Tagging, releasing and pushing to the AUR are the user's steps, never an agent's.
+- Rust edition 2024, MSRV 1.85, MPL-2.0. Work on `main`. CI (`ci.yml`) runs clippy and tests. Pushing a `vX.Y.Z` tag runs `release.yml`: it uploads a source archive, builds the AUR package from it and keeps the AUR files (real checksum, `.SRCINFO`) as the `aur` artifact.
+- Release when needed, without asking: once user-facing changes (features, fixes) are pushed to `main` and CI is green, bump the version (minor for features, patch for fixes) in `Cargo.toml`, `Cargo.lock`, `packaging/arch/PKGBUILD` (`pkgrel=1`), `packaging/aur/scdr/PKGBUILD` and `.SRCINFO`, and `packaging/aur/scdr-git` (see `fe4c41f`); commit `release: X.Y.Z` listing what changed, push it, tag `vX.Y.Z` on that commit, push the tag, and check that `release.yml` succeeds. Pushing the `aur` artifact to the AUR stays the user's step.
 - Do not edit or commit build output in `packaging/arch` (`pkg/`, `src/`, `*.pkg.tar.zst` are git-ignored).
 
 ## Gotchas
