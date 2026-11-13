@@ -33,8 +33,18 @@ fn is_devbox(s: &crate::system::SchedExt) -> bool {
     s.is_active() && s.ops.as_deref().is_some_and(|o| o == OPS || o.starts_with("devbox_"))
 }
 
+/// Starts the unit and waits (up to 35 s) for the kernel to run scx_devbox: loading takes a
+/// second or two, and scx_devbox itself waits up to 30 s for another scheduler to let go.
+/// Without the wait, the next sync would still see EEVDF and take it for a switch by hand.
 pub async fn start(bus: &zbus::Connection) -> zbus::Result<()> {
-    unit(bus, "StartUnit").await
+    unit(bus, "StartUnit").await?;
+    for _ in 0..350 {
+        if running() {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Err(zbus::Error::Failure("scx_devbox didn't load within 35 s (journalctl -u scx_devbox)".into()))
 }
 
 /// Stops the unit and waits (up to 5 s) for the kernel to let go of it, so
