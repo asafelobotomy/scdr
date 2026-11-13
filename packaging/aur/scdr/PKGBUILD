@@ -10,7 +10,7 @@ pkgdesc="Process scheduling and priority daemon for EEVDF and sched_ext kernels"
 arch=('x86_64' 'aarch64')
 url="https://github.com/asafelobotomy/scdr"
 license=('MPL-2.0')
-makedepends=('cargo' 'clang' 'bpf' 'libbpf' 'libelf' 'zlib')
+makedepends=('cargo' 'clang' 'bpf' 'libbpf' 'libelf' 'zlib' 'dbus' 'systemd')
 # The source archive the release workflow uploads (git archive of the tag),
 # not GitHub's generated /archive/ tarball, whose bytes aren't guaranteed.
 # The release's `aur` artifact has this PKGBUILD with the real checksum.
