@@ -31,6 +31,10 @@ the local `packaging/arch/PKGBUILD`.
    cd ~/aur/scdr-git && git add -A && git commit -m "Initial upload" && git push
    ```
 
-Expected `namcap` warnings: the empty `rules.d` directories (they're for
-drop-ins), and "dbus/systemd may not be needed" (scdr talks to them over
-D-Bus and `systemctl` at runtime rather than linking them).
+Expected `namcap` warnings, and no errors: the empty `rules.d` directories
+(they're for drop-ins); "dbus/systemd may not be needed" (scdr talks to them
+over D-Bus and `systemctl` at runtime rather than linking them); "unused
+shared library ld-linux-x86-64.so.2" (Rust binaries); the Plasma and uQ QML
+modules as uninstalled or optional dependencies (the panel widget, Settings
+page and bar widget are optional, hence `plasma-workspace`, `kquickcharts`,
+`kcmutils` and `uq` in `optdepends`).
