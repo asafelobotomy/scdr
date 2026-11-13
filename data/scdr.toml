@@ -52,6 +52,12 @@ name = [
     # Userspace OOM killers must keep up when memory runs out, not be
     # demoted with other system services (systemd-oomd is covered above).
     "earlyoom", "nohang",
+    # The network path: a firewall that holds each new connection until it
+    # answers, userspace VPNs that carry the traffic, DNS resolvers, and the
+    # services that keep the link up. As system services they would wait
+    # behind busy CPUs, and every connection with them.
+    "opensnitchd", "tailscaled", "zerotier-one", "openvpn", "openconnect",
+    "NetworkManager", "wpa_supplicant", "iwd", "dnsmasq", "unbound", "dnscrypt-proxy",
 ]
 # Tools that set priorities on purpose. The tool, whatever it execs, and all
 # its descendants are left alone. (gamemoderun isn't here: games GameMode
@@ -203,6 +209,15 @@ nice = 15
 io = "be:7"
 oom_score_adj = 500
 
+# Torrent and download clients: long transfers you don't watch. Batch keeps
+# their CPU work from preempting interactive tasks, and idle IO keeps their
+# disk writes out of everything else's way; the network rate is unaffected.
+[profile.transfer]
+sched = "batch"
+nice = 10
+io = "idle"
+cpu_weight = 50
+
 [profile.indexer]
 sched = "idle"
 nice = 19
@@ -272,6 +287,15 @@ name = [
 profile = "build"
 name = ["qemu-system-*", "qemu-kvm"]
 cgroup = "*tools.slice/*"
+
+# Matched by name, so a torrent client's window keeps this profile even when
+# focused (rules come before roles).
+[[rule]]
+profile = "transfer"
+name = [
+    "qbittorrent", "qbittorrent-nox", "transmission-*", "deluged", "deluge*",
+    "rtorrent", "ktorrent", "aria2c", "fragments",
+]
 
 [[rule]]
 profile = "indexer"
