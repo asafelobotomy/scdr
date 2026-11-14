@@ -10,7 +10,7 @@
 
 use crate::config::{Config, Paths, Role, SchedChoice};
 use crate::policy;
-use crate::service::Service;
+use crate::service::{Service, WidgetSamples, WidgetState};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use zbus::message::Header;
@@ -95,10 +95,18 @@ impl Daemon {
         serde_json::to_string(&self.service.lock().unwrap().processes()).unwrap_or_default()
     }
 
-    /// A compact summary for the panel widget; changes are signalled.
+    /// A compact summary for the panel widget; changes are signalled,
+    /// except to the pressure numbers alone (those follow `Samples`).
     #[zbus(property)]
     fn state(&self) -> String {
         serde_json::to_string(&self.service.lock().unwrap().widget_state()).unwrap_or_default()
+    }
+
+    /// The live graphs' numbers: pressure and scx_devbox's latest samples.
+    /// Signalled when they change, up to every 2 s.
+    #[zbus(property)]
+    fn samples(&self) -> String {
+        serde_json::to_string(&self.service.lock().unwrap().widget_samples()).unwrap_or_default()
     }
 
     /// Restores everything scdr changed and stops changing anything.
@@ -288,6 +296,44 @@ async fn caller(header: &Header<'_>, conn: &zbus::Connection) -> zbus::fdo::Resu
     Ok((uid, sender.to_string()))
 }
 
+/// What `State` and `Samples` last signalled.
+#[derive(Default)]
+pub struct Published {
+    state: Option<WidgetState>,
+    samples: Option<WidgetSamples>,
+}
+
+/// Emits PropertiesChanged for `State` when more than its pressure numbers
+/// changed, and for `Samples` when the live numbers did, each on its own:
+/// a client that shows only the summary isn't woken for every sample.
+pub async fn publish_state(conn: &zbus::Connection, service: &Arc<Mutex<Service>>, last: &mut Published) {
+    let (state, samples) = {
+        let svc = service.lock().unwrap();
+        (svc.widget_state(), svc.widget_samples())
+    };
+    let state_due = last.state.as_ref().is_none_or(|l| state.differs_beyond_live(l));
+    let samples_due = last.samples.as_ref() != Some(&samples);
+    if !state_due && !samples_due {
+        return;
+    }
+    if state_due {
+        last.state = Some(state);
+    }
+    if samples_due {
+        last.samples = Some(samples);
+    }
+    let Ok(iface) = conn.object_server().interface::<_, Daemon>(OBJECT_PATH).await else {
+        return;
+    };
+    let daemon = iface.get().await;
+    if state_due {
+        let _ = daemon.state_changed(iface.signal_emitter()).await;
+    }
+    if samples_due {
+        let _ = daemon.samples_changed(iface.signal_emitter()).await;
+    }
+}
+
 #[zbus::proxy(
     interface = "org.scdr.Daemon1",
     default_service = "org.scdr.Daemon1",
@@ -305,6 +351,8 @@ pub trait Daemon1 {
     fn set_settings(&self, json: &str) -> zbus::Result<String>;
     #[zbus(property)]
     fn state(&self) -> zbus::Result<String>;
+    #[zbus(property)]
+    fn samples(&self) -> zbus::Result<String>;
     fn set_foreground(&self, pid: u32) -> zbus::Result<()>;
     fn set_audio_clients(&self, pids: &[u32]) -> zbus::Result<()>;
     fn set_games(&self, pids: &[u32]) -> zbus::Result<()>;

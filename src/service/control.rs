@@ -29,7 +29,10 @@ pub struct ProcessReport {
     pub app: Option<String>,
 }
 
-/// The compact summary behind the `State` D-Bus property.
+/// The compact summary behind the `State` D-Bus property. Its pressure
+/// numbers are current when it is read, but a change to them alone isn't
+/// signalled (see [`WidgetState::differs_beyond_live`]): clients that show
+/// them live follow `Samples`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WidgetState {
     pub paused: bool,
@@ -45,8 +48,34 @@ pub struct WidgetState {
     /// Memory and io pressure (PSI "some" avg10), for the widget's graphs.
     pub memory_pressure: Option<f64>,
     pub io_pressure: Option<f64>,
-    /// scx_devbox samples (one a second) new since the last tick; the
-    /// widget keeps the history. Empty unless devbox runs.
+}
+
+impl WidgetState {
+    /// Whether `State` is worth signalling after `last`: something other
+    /// than the pressure numbers changed (`pressure_active` counts). The
+    /// numbers move every tick and travel in `Samples`, so that every
+    /// listener isn't sent the whole summary every 2 s.
+    pub fn differs_beyond_live(&self, last: &WidgetState) -> bool {
+        let quiet = |s: &WidgetState| WidgetState {
+            cpu_pressure: None,
+            memory_pressure: None,
+            io_pressure: None,
+            ..s.clone()
+        };
+        quiet(self) != quiet(last)
+    }
+}
+
+/// The fast-moving numbers behind the `Samples` D-Bus property, for live
+/// graphs: pressure in whole percent and scx_devbox's latest samples.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WidgetSamples {
+    pub cpu_pressure: Option<f64>,
+    pub memory_pressure: Option<f64>,
+    pub io_pressure: Option<f64>,
+    /// scx_devbox samples (one a second), a short rolling window; the
+    /// widget keeps the history and skips those it has by `seq`. Empty
+    /// unless devbox runs.
     pub devbox: Vec<super::devbox::DevboxSample>,
 }
 
@@ -151,12 +180,12 @@ impl Service {
     pub fn widget_state(&self) -> WidgetState {
         let managed = self.procs.values().filter(|e| matches!(e.state, State::Managed(_))).count();
         let roles = self.config.roles.for_power(self.power_profile.as_deref());
+        let (cpu_pressure, memory_pressure, io_pressure) = self.pressure_numbers();
         WidgetState {
             paused: self.paused,
             managed,
             power_profile: self.power_profile.clone(),
-            // Whole percent: State is re-sent to every listener when it changes.
-            cpu_pressure: self.cpu_pressure.map(f64::round),
+            cpu_pressure,
             pressure_active: self.pressure_active,
             scheduler: self.policy_report.clone(),
             roles: Role::ALL
@@ -165,10 +194,24 @@ impl Service {
                 .collect(),
             agents: self.sessions.len(),
             boosted: self.process_reports(true),
-            memory_pressure: crate::system::psi_some_avg10("memory").map(f64::round),
-            io_pressure: crate::system::psi_some_avg10("io").map(f64::round),
-            devbox: self.devbox_samples.clone(),
+            memory_pressure,
+            io_pressure,
         }
+    }
+
+    pub fn widget_samples(&self) -> WidgetSamples {
+        let (cpu_pressure, memory_pressure, io_pressure) = self.pressure_numbers();
+        WidgetSamples { cpu_pressure, memory_pressure, io_pressure, devbox: self.devbox_samples.clone() }
+    }
+
+    /// CPU, memory and io pressure in whole percent: each change is sent
+    /// to every listener.
+    fn pressure_numbers(&self) -> (Option<f64>, Option<f64>, Option<f64>) {
+        (
+            self.cpu_pressure.map(f64::round),
+            crate::system::psi_some_avg10("memory").map(f64::round),
+            crate::system::psi_some_avg10("io").map(f64::round),
+        )
     }
 
     /// Loads persisted pause/role state; call before `startup`.
@@ -242,5 +285,33 @@ mod tests {
         assert_eq!(n("app-flatpak-org.mozilla.firefox-12345.scope").as_deref(), Some("org.mozilla.firefox"));
         assert_eq!(n("app-pamac\\x2dtray\\x2dplasma@autostart.service").as_deref(), Some("pamac-tray-plasma"));
         assert_eq!(n("plasma-kwin_wayland.service"), None);
+    }
+
+    #[test]
+    fn state_is_signalled_only_beyond_pressure_numbers() {
+        let a = super::WidgetState {
+            paused: false,
+            managed: 3,
+            power_profile: Some("balanced".into()),
+            cpu_pressure: Some(12.0),
+            pressure_active: false,
+            scheduler: vec!["eevdf: x".into()],
+            roles: vec![("game".into(), "game".into(), true)],
+            agents: 1,
+            boosted: Vec::new(),
+            memory_pressure: Some(0.0),
+            io_pressure: None,
+        };
+        assert!(!a.differs_beyond_live(&a.clone()));
+        let numbers = super::WidgetState {
+            cpu_pressure: Some(40.0),
+            memory_pressure: Some(3.0),
+            io_pressure: Some(1.0),
+            ..a.clone()
+        };
+        assert!(!numbers.differs_beyond_live(&a), "pressure numbers alone go through Samples");
+        assert!(super::WidgetState { pressure_active: true, ..numbers.clone() }.differs_beyond_live(&a));
+        assert!(super::WidgetState { managed: 4, ..a.clone() }.differs_beyond_live(&a));
+        assert!(super::WidgetState { paused: true, ..a.clone() }.differs_beyond_live(&a));
     }
 }

@@ -13,11 +13,12 @@ order = 60
 bus_name = "org.scdr.Daemon1"
 
 # Pause, Resume and SetRoleEnabled ask polkit, which may wait for the password longer than a
-# widget's 2 s call deadline; the widget then follows the change through State.
+# widget's 2 s call deadline; the widget then follows the change through State. Samples carries
+# the live graphs' numbers (pressure, scx_devbox samples), which State no longer signals.
 [dbus]
 name = "org.scdr.Daemon1"
 path = "/org/scdr/Daemon1"
 interface = "org.scdr.Daemon1"
 methods = ["Pause", "Resume", "SetRoleEnabled"]
-properties = ["State"]
+properties = ["State", "Samples"]
 bus = "system"

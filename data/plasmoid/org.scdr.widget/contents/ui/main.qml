@@ -1,6 +1,7 @@
 // SCDR panel widget: status and quick controls for scdrd, over the system
-// bus. Reads the daemon's State property (updated through PropertiesChanged,
-// no polling) and calls Pause/Resume/SetRoleEnabled, which polkit guards.
+// bus. Reads the daemon's State and Samples properties (updated through
+// PropertiesChanged, no polling) and calls Pause/Resume/SetRoleEnabled, which
+// polkit guards.
 // The Configure dialog (contents/config) edits scdrd's settings layer.
 
 import QtQuick
@@ -20,6 +21,10 @@ PlasmoidItem {
     readonly property string objectPath: "/org/scdr/Daemon1"
     readonly property bool running: watcher.registered
     readonly property var scdr: running && propsLoader.item ? parse(propsLoader.item.properties.State) : null
+    // The live numbers (pressure, scx_devbox samples), signalled apart from
+    // State; scdrd before Samples kept them in State.
+    readonly property var samples: running && propsLoader.item ? parse(propsLoader.item.properties.Samples) : null
+    readonly property var live: samples || scdr
     readonly property bool paused: scdr !== null && scdr.paused
     property string lastError: ""
 
@@ -104,13 +109,16 @@ PlasmoidItem {
             for (const k of ["wait_max", "wait_avg", "interactive", "batch", "damped", "preempt", "perf"]) {
                 root.push(k, 0);
             }
-            root.pushPressure(root.scdr);
+            root.pushPressure(root.live);
             root.historyRevision++;
         }
     }
 
     onScdrChanged: if (scdr) {
         record(scdr);
+    }
+    onSamplesChanged: if (samples) {
+        record(samples);
     }
 
     function parse(json) {
@@ -265,8 +273,8 @@ PlasmoidItem {
                 }
                 PlasmaComponents3.Label { text: i18n("CPU pressure:"); opacity: 0.7 }
                 PlasmaComponents3.Label {
-                    text: root.scdr && root.scdr.cpu_pressure !== null
-                          ? Math.round(root.scdr.cpu_pressure) + "%"
+                    text: root.scdr && root.live.cpu_pressure !== null
+                          ? Math.round(root.live.cpu_pressure) + "%"
                             + (root.scdr.pressure_active ? " " + i18n("(demoting background apps)") : "")
                           : "–"
                 }

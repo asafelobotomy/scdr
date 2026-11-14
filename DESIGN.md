@@ -141,7 +141,10 @@ bring in the CachyOS game list (about 13.5k entries) without curating it by hand
 
 A Plasma 6 panel widget (`data/plasmoid`), pure QML on Plasma's D-Bus QML
 module: it binds to the daemon's `State` property (a JSON summary, emitted
-through PropertiesChanged when it changes, at most every 2 s) and calls
+through PropertiesChanged when it changes, at most every 2 s, but not for a
+change to its pressure numbers alone) and `Samples` (the live graphs'
+pressure numbers and scx_devbox samples, signalled on their own so a client
+showing only the summary isn't sent it every tick), and calls
 `Pause`, `Resume` and `SetRoleEnabled`. Those, and `Reload`, need root or
 polkit's `org.scdr.control` (`auth_admin_keep`); pause and role switches
 persist in `/var/lib/scdr/runtime.json`.
