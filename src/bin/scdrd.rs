@@ -3,7 +3,7 @@
 use anyhow::Context;
 use clap::Parser;
 use scdr::config::{Config, Paths};
-use scdr::dbus::{BUS_NAME, Daemon, OBJECT_PATH, PowerProfilesProxy};
+use scdr::dbus::{BUS_NAME, Daemon, OBJECT_PATH, PowerProfilesProxy, Published, publish_state};
 use futures_util::{Stream, StreamExt};
 use scdr::policy::Policy;
 use scdr::service::{Service, cpu_some_avg10};
@@ -176,7 +176,7 @@ async fn main() -> anyhow::Result<()> {
     // Pressure sampling and scheduler policy run on a short tick, which also
     // publishes the State property when it changes.
     let mut policy = Policy::default();
-    let mut last_state = String::new();
+    let mut last_state = Published::default();
     let mut tick = tokio::time::interval(Duration::from_secs(2));
 
     let mut hup = signal(SignalKind::hangup())?;
@@ -366,17 +366,5 @@ async fn next_item<S: Stream + Unpin>(stream: &mut Option<S>) -> Option<S::Item>
     match stream {
         Some(s) => s.next().await,
         None => std::future::pending().await,
-    }
-}
-
-/// Emits PropertiesChanged for `State` when the summary differs from the last one.
-async fn publish_state(conn: &zbus::Connection, service: &Arc<Mutex<Service>>, last: &mut String) {
-    let now = serde_json::to_string(&service.lock().unwrap().widget_state()).unwrap_or_default();
-    if now == *last {
-        return;
-    }
-    *last = now;
-    if let Ok(iface) = conn.object_server().interface::<_, Daemon>(OBJECT_PATH).await {
-        let _ = iface.get().await.state_changed(iface.signal_emitter()).await;
     }
 }

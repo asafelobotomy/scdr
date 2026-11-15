@@ -38,6 +38,39 @@ test("parseState normalises State and refuses junk", () => {
   assert.equal(L.parseState(JSON.stringify({ managed: 1 })), null);
 });
 
+test("parseSamples reads the live numbers and withSamples puts them on State", () => {
+  const x = L.parseSamples(JSON.stringify({ cpu_pressure: 33, memory_pressure: null, io_pressure: 4,
+    devbox: [sample(5), { junk: true }] }));
+  assert.equal(x.cpuPressure, 33);
+  assert.equal(x.memoryPressure, null);
+  assert.deepEqual(plain(x.devbox.map((d) => d.seq)), [5]);
+  assert.equal(L.parseSamples("{"), null);
+  assert.equal(L.parseSamples("[]"), null);
+  // scdrd with Samples leaves the samples out of State.
+  const s = L.parseState(stateText({ devbox: undefined }));
+  assert.deepEqual(plain(s.devbox), []);
+  const merged = L.withSamples(s, x);
+  assert.equal(merged.cpuPressure, 33);
+  assert.equal(merged.ioPressure, 4);
+  assert.equal(merged.managed, 3);
+  assert.equal(s.cpuPressure, 7.4, "State itself is left alone");
+  const h = L.newHistory(10);
+  assert.equal(L.record(h, merged, 1000), 1);
+  assert.equal(L.last(h, "cpu"), 33);
+  assert.equal(L.last(h, "interactive"), 50);
+});
+
+test("skip pads the time spent hidden with zeros, at most the whole history", () => {
+  const h = L.newHistory(10);
+  L.push(h, "cpu", 50);
+  assert.equal(L.skip(h, 999), 0);
+  assert.equal(L.last(h, "cpu"), 50);
+  assert.equal(L.skip(h, 3500), 3);
+  assert.deepEqual(plain(L.tail(h, "cpu", 4)), [50, 0, 0, 0]);
+  assert.equal(L.skip(h, 3600 * 1000), 10);
+  for (const k of L.KEYS) assert.equal(h.data[k].length, 10);
+});
+
 test("schedulerInfo names the running scheduler", () => {
   const name = (lines) => L.schedulerInfo(lines).name;
   assert.deepEqual(plain(L.schedulerInfo(["sched_ext: devbox (started outside scdr; left alone)", "eevdf: x"])),
@@ -135,7 +168,7 @@ test("the manifest lists only what the widget uses", () => {
   assert.match(toml, /^bus = "system"$/m);
   assert.match(toml, /^bus_name = "org.scdr.Daemon1"$/m);
   assert.match(toml, /^methods = \["Pause", "Resume", "SetRoleEnabled"\]$/m);
-  assert.match(toml, /^properties = \["State"\]$/m);
+  assert.match(toml, /^properties = \["State", "Samples"\]$/m);
   const qml = readdirSync(dir).filter((f) => /\.(qml|js)$/.test(f));
   for (const f of qml) {
     const text = readFileSync(new URL(f, dir), "utf8");

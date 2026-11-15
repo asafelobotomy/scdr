@@ -13,7 +13,7 @@ mod split;
 mod transition;
 mod unit_jobs;
 
-pub use control::{ProcessReport, WidgetState};
+pub use control::{ProcessReport, WidgetSamples, WidgetState};
 pub use devbox::HINTS_FILE as DEVBOX_HINTS_FILE;
 pub use pressure::cpu_some_avg10;
 pub use roles::SessionReport;

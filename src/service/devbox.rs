@@ -95,7 +95,7 @@ fn keep_delegating(
 const SUPPORTED_API: &str = "1";
 pub const HINTS_FILE: &str = "devbox-hints";
 
-/// Samples kept for the widget (it gets State at least every 2 s).
+/// Samples kept for the widget (it gets Samples at least every 2 s).
 const SAMPLE_WINDOW: usize = 5;
 
 /// Whether scx_devbox is the running sched_ext scheduler and takes hints.

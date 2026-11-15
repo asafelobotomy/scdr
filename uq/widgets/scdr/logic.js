@@ -1,5 +1,5 @@
 .pragma library
-// The bar widget's pure logic: reading scdr's State property, the live graphs' history (ported
+// The bar widget's pure logic: reading scdr's State and Samples properties, the live graphs' history (ported
 // from the Plasma widget's main.qml) and the plain-words labels. No Qt calls, so Node tests it
 // (tests/uq/widget.test.mjs).
 
@@ -63,9 +63,6 @@ function parseState(text) {
             app: typeof p.app === "string" ? clip(p.app, 80) : ""
         });
     });
-    var devbox = (Array.isArray(v.devbox) ? v.devbox : []).filter(function (x) {
-        return isObject(x) && typeof x.seq === "number";
-    });
     var scheduler = Array.isArray(v.scheduler)
         ? v.scheduler.slice(0, 20).filter(function (s) { return typeof s === "string"; }).map(function (s) { return clip(s); })
         : [];
@@ -81,8 +78,46 @@ function parseState(text) {
         roles: roles,
         agents: typeof v.agents === "number" ? v.agents : 0,
         boosted: boosted,
-        devbox: devbox
+        // scdrd before the Samples property sent the samples here.
+        devbox: devboxSamples(v.devbox)
     };
+}
+
+function devboxSamples(list) {
+    return (Array.isArray(list) ? list : []).filter(function (x) {
+        return isObject(x) && typeof x.seq === "number";
+    }).slice(-MAX_ROWS);
+}
+
+// `text` is the Samples property (WidgetSamples in scdr's service/control.rs): the pressure
+// numbers and scx_devbox's latest samples, which State no longer signals. Null if unreadable.
+function parseSamples(text) {
+    var v;
+    try {
+        v = JSON.parse(text);
+    } catch (e) {
+        return null;
+    }
+    if (!isObject(v))
+        return null;
+    return {
+        cpuPressure: optNum(v.cpu_pressure),
+        memoryPressure: optNum(v.memory_pressure),
+        ioPressure: optNum(v.io_pressure),
+        devbox: devboxSamples(v.devbox)
+    };
+}
+
+// A copy of the parsed State with the live numbers of parsed Samples.
+function withSamples(state, samples) {
+    var s = {};
+    for (var k in state)
+        s[k] = state[k];
+    s.cpuPressure = samples.cpuPressure;
+    s.memoryPressure = samples.memoryPressure;
+    s.ioPressure = samples.ioPressure;
+    s.devbox = samples.devbox;
+    return s;
 }
 
 // The running scheduler from scdr's status lines ("sched_ext: devbox (started outside scdr; left
@@ -235,6 +270,15 @@ function record(h, state, now) {
         h.lastSampleAt = now;
     }
     return fresh.length;
+}
+
+// Back on screen after `ms` hidden, when nothing was recorded: a row of zeros a second (as at
+// start, "no data") so the graphs keep their time scale. Returns how many rows were added.
+function skip(h, ms) {
+    var n = Math.min(h.length, Math.floor(num(ms) / 1000));
+    for (var i = 0; i < n; i++)
+        KEYS.forEach(function (k) { push(h, k, 0); });
+    return n;
 }
 
 // The one-second clock: without devbox samples State only changes when a value does, so record

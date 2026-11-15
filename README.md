@@ -122,8 +122,8 @@ The package installs a Plasma widget: right-click the panel, *Add or Manage
 Widgets*, search for "SCDR". It shows the active scheduler, CPU pressure and
 power profile, switches each role on or off, lists the apps boosted right now
 (grouped by app), and pauses or resumes scdr. It's plain QML talking to scdrd
-over the system bus and follows the daemon's `State` property, so it doesn't
-poll. Changing anything needs root or polkit's `org.scdr.control`, which asks
+over the system bus and follows the daemon's `State` and `Samples` properties,
+so it doesn't poll. Changing anything needs root or polkit's `org.scdr.control`, which asks
 for your password and remembers it for a few minutes.
 
 Its settings (the gear in the popup, or right-click → *Configure SCDR…*) have
@@ -162,7 +162,8 @@ with a sparkline of CPU pressure, or two bars while paused. Clicking it opens a 
 state, the active scheduler and power profile, a Pause/Resume button, the per-role switches, what
 is boosted now, and the Plasma widget's live graphs (the focused app's wait to run, tasks
 scheduled per second, pressure and the CPU frequency target; the first two need scx_devbox). The
-widget keeps three minutes of history while the popup is closed. Its D-Bus calls end after 2 s, so
+widget keeps three minutes of history while the popup is closed; on uQ with `ctx.view` it stops
+sampling while the bar is hidden and picks up again when it shows. Its D-Bus calls end after 2 s, so
 while polkit waits for the password the popup says so and follows the change through `State`.
 
 ## Using it

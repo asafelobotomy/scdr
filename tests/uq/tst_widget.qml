@@ -44,6 +44,7 @@ Item {
         // method -> {value} | {error}
         property var answers: ({})
         property string stateText: ""
+        property string samplesText: ""
         property int popups: 0
         property int closes: 0
         // Bumped on each load: answers for an older load are dropped, as uQ does.
@@ -55,6 +56,18 @@ Item {
             for (var i = 0; i < handlers.length; i++)
                 handlers[i]({ State: text });
         }
+
+        function emitSamples(text) {
+            samplesText = text;
+            props = { State: stateText, Samples: text };
+            for (var i = 0; i < handlers.length; i++)
+                handlers[i]({ Samples: text });
+        }
+    }
+    // uQ's ctx.view: whether the slot is on screen.
+    QtObject {
+        id: view
+        property bool shown: true
     }
     readonly property var ctx: ({
         Theme: theme,
@@ -74,13 +87,16 @@ Item {
                 var gen = fake.generation;
                 Qt.callLater(function () {
                     if (gen === fake.generation)
-                        cb(fake.stateText ? { value: { State: fake.stateText } } : { error: "not running" });
+                        cb(!fake.stateText ? { error: "not running" }
+                           : fake.samplesText ? { value: { State: fake.stateText, Samples: fake.samplesText } }
+                           : { value: { State: fake.stateText } });
                 });
             },
             onProps: function (cb) { fake.handlers = fake.handlers.concat([cb]); },
             onSignal: function (cb) {}
         },
         command: { run: function (id, args, cb) { cb({ error: "none" }); } },
+        view: view,
         openPopup: function () { fake.popups++; },
         closePopup: function () { fake.closes++; },
         fail: function (reason) { console.warn("widget failed: " + reason); }
@@ -142,6 +158,8 @@ Item {
             fake.closes = 0;
             fake.generation++;
             fake.stateText = root.stateDoc();
+            fake.samplesText = "";
+            view.shown = true;
             popupLoader.sourceComponent = null;
             loader.source = "";
             loader.setSource(root.widgetUrl, { ctx: root.ctx });
@@ -172,6 +190,60 @@ Item {
             compare(w.revision, rev + 1);
             compare(w.hist.data.interactive[w.hist.length - 1], 5);
             compare(w.hist.data.interactive.length, w.hist.length);
+        }
+
+        function samplesDoc(over) {
+            return JSON.stringify(Object.assign({ cpu_pressure: 40, memory_pressure: 1, io_pressure: 0, devbox: [] }, over || {}));
+        }
+
+        // scdrd with Samples: State has no samples and isn't re-sent for pressure alone.
+        function test_follows_samples() {
+            var w = loader.item;
+            var rev = w.revision;
+            fake.emit(root.stateDoc({ devbox: undefined }));
+            compare(w.revision, rev);
+            fake.emitSamples(samplesDoc({ devbox: [{ seq: 3, interactive: 7, perf_pct: 50, wait_max_ms: 0.2, wait_avg_ms: 0.01 }] }));
+            compare(w.revision, rev + 1);
+            compare(w.scdr.cpuPressure, 40);
+            compare(w.scdr.managed, 29, "the rest of State stays");
+            compare(w.hist.data.interactive[w.hist.length - 1], 7);
+            compare(w.hist.data.cpu[w.hist.length - 1], 40);
+            // A read gets both.
+            fake.samplesText = samplesDoc({ cpu_pressure: 55 });
+            w.refresh();
+            tryVerify(function () { return w.scdr.cpuPressure === 55; });
+        }
+
+        // Hidden, it neither samples nor reads; shown again, it reads at once and pads the gap.
+        function test_rests_while_hidden() {
+            var w = loader.item;
+            var sampler = findChild(w, "sampler");
+            verify(sampler.running);
+            view.shown = false;
+            verify(!w.onScreen);
+            verify(!sampler.running);
+            fake.calls = [];
+            w.hiddenAt = Date.now() - 5000;
+            var cpu = w.hist.data.cpu.slice();
+            view.shown = true;
+            verify(sampler.running);
+            compare(fake.calls.length, 1);
+            compare(fake.calls[0].method, "get");
+            compare(w.hist.data.cpu[w.hist.length - 6], cpu[cpu.length - 1]);
+            compare(w.hist.data.cpu.slice(-5), [0, 0, 0, 0, 0]);
+        }
+
+        // Loaded while hidden: no read until it shows.
+        function test_loaded_hidden() {
+            view.shown = false;
+            fake.calls = [];
+            loader.source = "";
+            loader.setSource(root.widgetUrl, { ctx: root.ctx });
+            wait(50);
+            compare(loader.item.scdr, null);
+            compare(fake.calls.length, 0);
+            view.shown = true;
+            tryVerify(function () { return loader.item.scdr !== null; });
         }
 
         function test_popup_shows_state() {

@@ -1,7 +1,9 @@
 // uQ bar widget for scdr. The icon is a small CPU glyph with a sparkline of CPU pressure (two bars
 // when paused); clicking it opens Details.qml. Everything comes from scdrd's State property on the
-// system bus; the graphs' history lives here, in the bar, so it keeps collecting while the popup
-// is closed. All text goes through ctx.UqText (Caption.qml); see docs/integrating.md in uQ.
+// system bus, the live numbers from its Samples property; the graphs' history lives here, in the
+// bar, so it keeps collecting while the popup is closed, but only while the bar is on screen
+// (ctx.view.shown; uQ before ctx.view counts as always shown). All text goes through ctx.UqText
+// (Caption.qml); see docs/integrating.md in uQ.
 import QtQuick
 import "logic.js" as L
 
@@ -9,6 +11,10 @@ Item {
     id: root
 
     property var ctx
+    // Whether the icon is on screen. Hidden, it neither samples nor re-reads State (uQ holds the
+    // property updates back too); shown again, it reads State at once.
+    readonly property bool onScreen: !ctx || !ctx.view || ctx.view.shown
+    property real hiddenAt: 0
     // The parsed State (logic.js parseState), or null before the first read.
     property var scdr: null
     readonly property bool paused: scdr !== null && scdr.paused
@@ -63,6 +69,24 @@ Item {
         }
     }
 
+    // The Samples property: the pressure numbers and scx_devbox's samples.
+    function ingestSamples(text) {
+        var x = L.parseSamples(text);
+        if (!x || scdr === null)
+            return;
+        scdr = L.withSamples(scdr, x);
+        if (L.record(hist, scdr, Date.now()) > 0)
+            revision++;
+    }
+
+    // Both from one read or update: State first, so the samples land on the newest state.
+    function ingestAll(values) {
+        if (values.State !== undefined)
+            ingest(values.State);
+        if (values.Samples !== undefined)
+            ingestSamples(values.Samples);
+    }
+
     function refresh() {
         if (getting || !ctx)
             return;
@@ -70,7 +94,7 @@ Item {
         ctx.dbus.get(function (r) {
             root.getting = false;
             if (r && r.value && r.value.State !== undefined)
-                root.ingest(r.value.State);
+                root.ingestAll(r.value);
             else if (r && r.error && root.scdr === null)
                 root.problem = "scdr's state couldn't be read: " + String(r.error).slice(0, 160);
         });
@@ -110,18 +134,32 @@ Item {
 
     Component.onCompleted: {
         ctx.dbus.onProps(function (changed) {
-            if (changed && changed.State !== undefined)
-                root.ingest(changed.State);
+            if (changed)
+                root.ingestAll(changed);
         });
+        if (onScreen)
+            refresh();
+    }
+
+    onOnScreenChanged: {
+        if (!onScreen) {
+            hiddenAt = Date.now();
+            return;
+        }
+        if (hiddenAt > 0 && L.skip(hist, Date.now() - hiddenAt) > 0)
+            revision++;
+        hiddenAt = 0;
         refresh();
     }
 
-    // Without scx_devbox samples State only changes when a value does: record pressure once a
+    // Without scx_devbox samples Samples only changes when a value does: record pressure once a
     // second (as Plasma's widget does), and re-read State now and then in case a change was missed.
+    // Only while on screen: nothing shows the history otherwise.
     Timer {
+        objectName: "sampler"
         interval: 1000
         repeat: true
-        running: root.scdr !== null
+        running: root.scdr !== null && root.onScreen
         property int count: 0
         onTriggered: {
             if (L.tick(root.hist, root.scdr, Date.now())) {
