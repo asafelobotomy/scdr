@@ -234,7 +234,7 @@ test("file_rules_for_reading", () => {
 
 test("page_scripts_stay_small_and_plain", () => {
   const scripts = readdirSync(pageDir).filter((f) => f.endsWith(".js"));
-  assert.deepEqual(scripts.sort(), ["logic.js", "profiles.js", "rules.js", "schedulers.js", "words.js"]);
+  assert.deepEqual(scripts.sort(), ["logic.js", "plans.js", "profiles.js", "rules.js", "schedulers.js", "words.js"]);
   for (const f of scripts) {
     const text = readFileSync(`${pageDir}${f}`, "utf8");
     assert.ok(text.split("\n").length <= 400, `${f} is over 400 lines`);

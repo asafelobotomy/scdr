@@ -1,4 +1,4 @@
-// The boost switches and the list of apps boosted right now.
+// The boost switches: the app you use, audio, games and (under CPU pressure) the background.
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
@@ -48,24 +48,5 @@ ColumnLayout {
         color: host.errorColor
         wrapMode: Text.Wrap
         Layout.fillWidth: true
-    }
-    UqLabel {
-        text: "Boosted now"
-        font.bold: true
-        Layout.topMargin: 8
-    }
-    UqLabel {
-        visible: host.ready && host.view.state.boosted.length === 0
-        text: "Nothing is boosted right now."
-        color: host.mutedColor
-    }
-    Repeater {
-        model: host.ready ? host.view.state.boosted.slice(0, 20) : []
-        delegate: UqLabel {
-            required property var modelData
-            text: Words.boostedLine(modelData)
-            elide: Text.ElideRight
-            Layout.fillWidth: true
-        }
     }
 }

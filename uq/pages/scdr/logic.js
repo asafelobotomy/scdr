@@ -65,7 +65,7 @@ function parseState(text) {
     for (var j = 0; j < b.length && boosted.length < MAX_ROWS; j++) {
         if (!isObject(b[j]))
             continue;
-        boosted.push({ pid: typeof b[j].pid === "number" ? b[j].pid : 0, name: clip(b[j].name), profile: clip(b[j].profile), why: clip(b[j].why) });
+        boosted.push({ pid: typeof b[j].pid === "number" ? b[j].pid : 0, name: clip(b[j].name), profile: clip(b[j].profile), why: clip(b[j].why), role: typeof b[j].role === "string" ? clip(b[j].role, 20) : "", app: typeof b[j].app === "string" ? clip(b[j].app, 128) : "" });
     }
     return {
         paused: v.paused,

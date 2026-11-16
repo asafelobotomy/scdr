@@ -98,7 +98,7 @@ fn kind_of(name: &str) -> Result<Kind, String> {
     })
 }
 
-/// `text` as the JSON value for `name`. Lists are comma separated; an empty text is an empty list.
+/// `text` as the JSON value for `name`. Lists are comma separated; an empty text, `[]` or `none` is an empty list.
 pub fn parse_value(name: &str, text: &str) -> Result<Value, String> {
     let text = text.trim();
     Ok(match kind_of(name)? {
@@ -113,6 +113,7 @@ pub fn parse_value(name: &str, text: &str) -> Result<Value, String> {
             _ => return Err(format!("{name} is a number, not {text:?}")),
         },
         Kind::Text => json!(text),
+        Kind::List if text == "[]" || text == "none" => json!([]),
         Kind::List => json!(text.split(',').map(str::trim).filter(|s| !s.is_empty()).collect::<Vec<_>>()),
     })
 }

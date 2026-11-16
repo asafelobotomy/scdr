@@ -1,6 +1,6 @@
 # uQ Settings page for scdr. Installed to /usr/share/uq/settings/pages/scdr/ by scdr's
 # package; inert without uQ. Reference: docs/settings-pages.md in the uQ repository.
-uq_api = 1
+uq_api = 3
 id = "scdr"
 name = "Scheduling"
 icon = "preferences-system-performance"
@@ -46,7 +46,7 @@ keywords = ["pressure", "psi", "background", "threshold", "hold"]
 [[setting]]
 id = "system"
 label = "System-wide switches"
-keywords = ["iocost", "autogroup", "disk", "io", "weight"]
+keywords = ["iocost", "autogroup", "disk", "io", "weight", "rescan", "recheck"]
 
 [[setting]]
 id = "profiles"
@@ -68,20 +68,82 @@ id = "follow-focus"
 label = "Follow the focused window"
 keywords = ["agent", "session", "focus", "window"]
 
+[[setting]]
+id = "overview-pressure"
+label = "CPU pressure"
+keywords = ["busy", "load", "psi", "cpu"]
+
+[[setting]]
+id = "boosted"
+label = "Boosted apps"
+keywords = ["boost", "now", "priority", "focus"]
+
+[[setting]]
+id = "system-facts"
+label = "What scdr sees"
+keywords = ["version", "uptime", "governor", "power", "disks", "memory", "pressure"]
+
+[[setting]]
+id = "explain"
+label = "Why a process has its priority"
+keywords = ["explain", "why", "pid", "rule", "profile"]
+
+[[setting]]
+id = "running"
+label = "Running apps and their rules"
+keywords = ["list", "processes", "rule", "unmatched"]
+
+[[setting]]
+id = "tools-check"
+label = "Check the configuration and reload"
+keywords = ["check", "validate", "reload", "files", "warnings"]
+
+[[setting]]
+id = "bench"
+label = "Latency benchmark"
+keywords = ["benchmark", "latency", "wake", "measure"]
+
+[[setting]]
+id = "import"
+label = "Bring rules from another tool"
+keywords = ["import", "ananicy", "system76", "rules", "convert"]
+
+[[setting]]
+id = "split"
+label = "Agent tools get their own group"
+keywords = ["split", "claude", "tools", "memory", "slice", "weight"]
+
+[[setting]]
+id = "exceptions"
+label = "Programs scdr never changes"
+keywords = ["exceptions", "launchers", "ignore", "names"]
+
+[[setting]]
+id = "config-files"
+label = "Where your settings are saved"
+keywords = ["settings.toml", "file", "layer", "etc"]
+
+[[setting]]
+id = "reset"
+label = "Reset my changes"
+keywords = ["reset", "undo", "defaults", "drop", "restore"]
+
 [requires]
 bins = ["scdrctl"]
 
-# Writes (Pause, Resume, SetRoleEnabled, SetSettings, TryScheduler, EndSchedulerTrial) may wait for
-# the person's password, so they get the longest deadline. Pause, removing a rule and deleting or
-# undoing a profile ask first inside the page (ConfirmDialog.qml).
+# Writes (Resume, SetRoleEnabled, SetSettings, TryScheduler, EndSchedulerTrial) may wait for the
+# person's password, so they get the longest deadline. Removing a rule and deleting or undoing a
+# profile ask first inside the page (ConfirmDialog.qml, with what it changes). Pause, the settings
+# files and the installers are commands below, which uQ confirms with a preview.
+# Explain and Reload are the daemon's own: why a process has its priority, and read the files again.
 [dbus]
 name = "org.scdr.Daemon1"
 path = "/org/scdr/Daemon1"
 interface = "org.scdr.Daemon1"
-methods = ["Status", "Processes", "Settings", "Pause", "Resume", "SetRoleEnabled", "SetSettings", "TryScheduler", "EndSchedulerTrial"]
+methods = ["Status", "Processes", "Settings", "Explain", "Reload", "Resume", "SetRoleEnabled", "SetSettings", "TryScheduler", "EndSchedulerTrial"]
 properties = ["State"]
 bus = "system"
-timeout_ms = { Pause = 120000, Resume = 120000, SetRoleEnabled = 120000, SetSettings = 120000, TryScheduler = 120000, EndSchedulerTrial = 120000 }
+timeout_ms = { Reload = 120000, Resume = 120000, SetRoleEnabled = 120000, SetSettings = 120000, TryScheduler = 120000, EndSchedulerTrial = 120000 }
 
 # The State property, read with busctl so uQ can follow its PropertiesChanged signal.
 [[command]]
@@ -134,6 +196,7 @@ argv = ["/usr/bin/scdrctl", "schedulers", "install"]
 output = "none"
 timeout_ms = 600000
 confirm = "Install the extra CPU schedulers (scx-scheds and scx-tools)? Your package manager asks for your password."
+preview = "preview-installer-install"
 
 [[command]]
 id = "installer-update"
@@ -141,6 +204,7 @@ argv = ["/usr/bin/scdrctl", "schedulers", "update"]
 output = "none"
 timeout_ms = 600000
 confirm = "Update the whole system, the schedulers included? Arch doesn't update one package alone."
+preview = "preview-installer-update"
 
 [[command]]
 id = "installer-git"
@@ -148,3 +212,127 @@ argv = ["/usr/bin/scdrctl", "schedulers", "git"]
 output = "none"
 timeout_ms = 600000
 confirm = "Build the newest schedulers from the AUR (scx-scheds-git)? This can take several minutes."
+preview = "preview-installer-git"
+
+# What each installer would run: reads, so they don't ask.
+[[command]]
+id = "preview-installer-install"
+argv = ["/usr/bin/scdrctl", "schedulers", "install", "--dry-run", "--json"]
+output = "json"
+timeout_ms = 10000
+
+[[command]]
+id = "preview-installer-update"
+argv = ["/usr/bin/scdrctl", "schedulers", "update", "--dry-run", "--json"]
+output = "json"
+timeout_ms = 10000
+
+[[command]]
+id = "preview-installer-git"
+argv = ["/usr/bin/scdrctl", "schedulers", "git", "--dry-run", "--json"]
+output = "json"
+timeout_ms = 10000
+
+# Pause: the preview says what would be put back, from the daemon's own numbers. uQ shows it, and
+# the pause itself asks for the person's password through polkit.
+[[command]]
+id = "preview-pause"
+argv = ["/usr/bin/scdrctl", "pause", "--dry-run", "--json"]
+output = "json"
+timeout_ms = 10000
+
+[[command]]
+id = "pause"
+argv = ["/usr/bin/scdrctl", "pause"]
+output = "none"
+timeout_ms = 120000
+confirm = "Pause scdr? Every app's priority goes back to what it was until you resume."
+preview = "preview-pause"
+
+# The settings made here (`scdrctl config`), followed from the settings file. Reads work while
+# scdr is off; a change goes through scdrd, so polkit asks for the password, and scdr checks every
+# value before it saves and refuses what it wouldn't load. Only the Preferences keys are allowed.
+[[command]]
+id = "config"
+argv = ["/usr/bin/scdrctl", "config", "show", "--json"]
+output = "json"
+timeout_ms = 30000
+watch = { files = ["/var/lib/scdr/settings.toml", "/etc/scdr/scdr.toml"] }
+
+[[command]]
+id = "config-set"
+argv = ["/usr/bin/scdrctl", "config", "set", "--json"]
+output = "json"
+timeout_ms = 120000
+args = [{ name = "key", pattern = '^(system\.(iocost|autogroup|rescan_secs|exec_recheck_ms)|split\.(apps|keep|memory_high|io_weight|cpu_weight)|exceptions\.(name|launchers))$' }, { name = "value", pattern = '^[^\x00-\x1f\x7f-][^\x00-\x1f\x7f]{0,399}$' }]
+
+[[command]]
+id = "config-unset"
+argv = ["/usr/bin/scdrctl", "config", "unset", "--json"]
+output = "json"
+timeout_ms = 120000
+args = [{ name = "key", pattern = '^(system\.(iocost|autogroup|rescan_secs|exec_recheck_ms)|split\.(apps|keep|memory_high|io_weight|cpu_weight)|exceptions\.(name|launchers))$' }]
+
+[[command]]
+id = "preview-config-reset"
+argv = ["/usr/bin/scdrctl", "config", "reset", "--dry-run", "--json"]
+output = "json"
+timeout_ms = 30000
+
+[[command]]
+id = "config-reset"
+argv = ["/usr/bin/scdrctl", "config", "reset", "--json"]
+output = "json"
+timeout_ms = 120000
+confirm = "Drop every setting, rule and profile you made here? scdr's own files apply again."
+preview = "preview-config-reset"
+
+# Reads that need no daemon: whether the files load, and which running app gets which rule.
+[[command]]
+id = "check"
+argv = ["/usr/bin/scdrctl", "check", "--json"]
+output = "json"
+timeout_ms = 30000
+
+[[command]]
+id = "list"
+argv = ["/usr/bin/scdrctl", "list", "--json"]
+output = "json"
+timeout_ms = 30000
+
+[[command]]
+id = "list-all"
+argv = ["/usr/bin/scdrctl", "list", "--all", "--json"]
+output = "json"
+timeout_ms = 30000
+
+# The latency benchmark: whether it can run (it needs scdrd stopped), then the run, which prints a
+# line per step. It runs every CPU flat out for about a minute.
+[[command]]
+id = "bench-check"
+argv = ["/usr/bin/scdrctl", "bench", "--check", "--json"]
+output = "json"
+timeout_ms = 10000
+
+[[command]]
+id = "bench"
+argv = ["/usr/bin/scdrctl", "bench", "--ndjson"]
+output = "ndjson"
+timeout_ms = 600000
+confirm = "Run the benchmark? Every CPU runs flat out for about a minute, so the screen may stutter."
+
+# What importing rules would write and leave out. Writing them goes to /etc, which only an
+# administrator can do, so the page shows the command instead of running it.
+[[command]]
+id = "preview-import-ananicy"
+argv = ["/usr/bin/scdrctl", "import", "ananicy", "--dry-run", "--json"]
+output = "json"
+timeout_ms = 120000
+args = [{ name = "path", pattern = '^/[^\x00-\x1f\x7f]{1,400}$' }]
+
+[[command]]
+id = "preview-import-system76"
+argv = ["/usr/bin/scdrctl", "import", "system76", "--dry-run", "--json"]
+output = "json"
+timeout_ms = 120000
+args = [{ name = "path", pattern = '^/[^\x00-\x1f\x7f]{1,400}$' }]

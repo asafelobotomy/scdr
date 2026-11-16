@@ -32,6 +32,8 @@ fn values_are_read_by_the_keys_type() {
     assert_eq!(parse_value("system.rescan_secs", "60").unwrap(), json!(60));
     assert_eq!(parse_value("split.apps", "a, b,,c").unwrap(), json!(["a", "b", "c"]));
     assert_eq!(parse_value("split.apps", "").unwrap(), json!([]));
+    assert_eq!(parse_value("split.apps", "[]").unwrap(), json!([]));
+    assert_eq!(parse_value("split.apps", "none").unwrap(), json!([]));
     assert_eq!(parse_value("roles.game", "game").unwrap(), json!("game"));
     assert_eq!(parse_value("eevdf.power.balanced.base_slice_us", "3000").unwrap(), json!(3000));
     assert!(parse_value("system.rescan_secs", "soon").is_err());

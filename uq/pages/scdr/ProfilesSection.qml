@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.uq.settings
+import "plans.js" as Plans
 import "profiles.js" as Profiles
 import "words.js" as Words
 
@@ -49,7 +50,7 @@ ColumnLayout {
                 if (!shipped)
                     section.selected = "";
             });
-        });
+        }, Plans.removeProfilePlan(section.s, name, shipped));
     }
 
     // Keeps a profile selected while there is one.

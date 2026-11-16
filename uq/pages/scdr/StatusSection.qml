@@ -1,4 +1,5 @@
-// The top of the page: running or paused, CPU load, Pause and Resume, Start scdr.
+// Running or paused, with Pause (previewed by `scdrctl pause --dry-run --json`, then confirmed by
+// uQ) and Resume, and Start scdr when it isn't running.
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
@@ -11,6 +12,7 @@ ColumnLayout {
     spacing: 6
 
     SettingRow {
+        objectName: "status-row"
         settingId: "status"
         label: host.view.status === "ready" && !host.settingsDown
             ? (host.view.state.paused ? "scdr is paused" : "scdr is running")
@@ -23,7 +25,7 @@ ColumnLayout {
             text: host.ready && host.view.state.paused ? "Resume" : "Pause"
             onClicked: host.ready && host.view.state.paused
                 ? host.write("status", "Resume", [])
-                : host.confirmDialog.ask(Words.confirmText("pause"), () => host.write("status", "Pause", []))
+                : host.command("status", "pause", [])
         }
         QQC2.Button {
             visible: host.down
@@ -56,6 +58,11 @@ ColumnLayout {
         visible: host.view.status === "error"
         title: host.view.message || ""
         detail: "Try again in a moment."
+        Layout.fillWidth: true
+    }
+    QQC2.ProgressBar {
+        visible: host.view.status === "loading" || host.working("status") || host.working("start")
+        indeterminate: true
         Layout.fillWidth: true
     }
     UqLabel {
