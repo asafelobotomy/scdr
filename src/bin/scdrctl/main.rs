@@ -1,7 +1,10 @@
 //! scdrctl: inspect and control the SCDR daemon.
 
+mod bench;
+mod config_cmd;
 mod import;
 mod install;
+mod report;
 
 use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand};
@@ -42,11 +45,15 @@ enum Command {
         /// Include processes no rule matches.
         #[arg(long)]
         all: bool,
+        #[arg(long)]
+        json: bool,
         #[command(flatten)]
         paths: PathArgs,
     },
     /// Validate the configuration files.
     Check {
+        #[arg(long)]
+        json: bool,
         #[command(flatten)]
         paths: PathArgs,
     },
@@ -58,7 +65,13 @@ enum Command {
         json: bool,
     },
     /// Restore everything scdr changed and stop changing anything (polkit).
-    Pause,
+    Pause {
+        /// Say what would be put back and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Resume after `pause` (polkit).
     Resume,
     /// Turn a role on or off: game, audio, foreground, background (polkit).
@@ -84,6 +97,12 @@ enum Command {
         repeat: usize,
         #[arg(long)]
         json: bool,
+        /// One JSON line per step, then a last `done` line with the results.
+        #[arg(long)]
+        ndjson: bool,
+        /// Say whether a benchmark can run now and how long it takes; measure nothing.
+        #[arg(long)]
+        check: bool,
     },
     /// Convert ananicy-cpp or system76-scheduler rules into an scdr rules.d file.
     Import {
@@ -95,6 +114,11 @@ enum Command {
         /// Overwrite the --output file if it already exists.
         #[arg(long, global = true, requires = "output")]
         force: bool,
+        /// Say what would be written and what would be left out; write nothing.
+        #[arg(long, global = true)]
+        dry_run: bool,
+        #[arg(long, global = true)]
+        json: bool,
         #[command(flatten)]
         paths: PathArgs,
     },
@@ -106,6 +130,13 @@ enum Command {
         /// Print the command instead of running it.
         #[arg(long)]
         dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// The settings made in the widget, from the command line.
+    Config {
+        #[command(subcommand)]
+        what: config_cmd::ConfigCmd,
     },
     /// Run the per-user session agent (scdr-session.service): reports the
     /// focused window, GameMode games and PipeWire audio streams to scdrd.
@@ -142,6 +173,10 @@ pub(crate) struct PathArgs {
 }
 
 impl PathArgs {
+    pub(crate) fn paths(&self) -> Paths {
+        Paths { etc: self.etc_dir.clone(), share: self.share_dir.clone(), state: self.state_dir.clone() }
+    }
+
     pub(crate) fn load(&self) -> anyhow::Result<Config> {
         let paths = Paths {
             etc: self.etc_dir.clone(),
@@ -160,7 +195,18 @@ impl PathArgs {
     }
 }
 
-async fn daemon() -> anyhow::Result<Daemon1Proxy<'static>> {
+/// With `--json`, an error is a JSON line on stdout and exit code 1, so a page can read why.
+pub(crate) fn finish(json: bool, result: anyhow::Result<()>) -> anyhow::Result<()> {
+    match result {
+        Err(e) if json => {
+            println!("{}", serde_json::json!({ "ok": false, "error": format!("{e:#}") }));
+            std::process::exit(1)
+        }
+        other => other,
+    }
+}
+
+pub(crate) async fn daemon() -> anyhow::Result<Daemon1Proxy<'static>> {
     let conn = zbus::Connection::system()
         .await
         .context("connecting to the system bus")?;
@@ -169,7 +215,7 @@ async fn daemon() -> anyhow::Result<Daemon1Proxy<'static>> {
         .context("connecting to scdrd")
 }
 
-fn not_running(e: zbus::Error) -> anyhow::Error {
+pub(crate) fn not_running(e: zbus::Error) -> anyhow::Error {
     if let zbus::Error::MethodError(name, _, _) = &e {
         if name.as_str() == "org.freedesktop.DBus.Error.AccessDenied" {
             return anyhow::anyhow!(
@@ -222,49 +268,16 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Command::List { all, paths } => list(&paths.load()?, all),
-        Command::Check { paths } => {
-            let c = paths.load()?;
-            println!("ok: {} profiles, {} rules", c.profiles.len(), c.rules.len());
-            for f in &c.files {
-                println!("  {}", f.display());
-            }
-            for w in c.rules.warnings() {
-                println!("warning: {w}");
-            }
+        Command::List { all, json, paths } => finish(json, report::list(&paths, all, json))?,
+        Command::Check { json, paths } => finish(json, report::check(&paths, json))?,
+        Command::Import { from, output, force, dry_run, json, paths } => {
+            finish(json, import::import(from, output, force, &paths, import::Mode { dry_run, json }))?
         }
-        Command::Import { from, output, force, paths } => import::import(from, output, force, &paths)?,
-        Command::Schedulers { action, dry_run } => install::run(action, dry_run)?,
-        Command::Bench { duration, interval_us, load, repeat, json } => {
-            let cpus = std::thread::available_parallelism().map_or(4, |n| n.get());
-            let opt = scdr::bench::Options {
-                duration: std::time::Duration::from_secs(duration),
-                interval: std::time::Duration::from_micros(interval_us),
-                load_threads: load.unwrap_or(cpus * 2),
-            };
-            let scenarios = scdr::bench::default_scenarios();
-            let repeat = repeat.max(1);
-            if !json {
-                eprintln!(
-                    "{} busy threads on {cpus} CPUs, {duration}s per scenario, {repeat} round(s)",
-                    opt.load_threads
-                );
-            }
-            let mut runs: Vec<Vec<scdr::bench::Result>> = vec![Vec::new(); scenarios.len()];
-            for round in 1..=repeat {
-                for (i, s) in scenarios.iter().enumerate() {
-                    if !json {
-                        eprintln!("  round {round}/{repeat}: {}", s.name);
-                    }
-                    runs[i].push(scdr::bench::run(s, &opt));
-                }
-            }
-            let results: Vec<_> = runs.iter().map(|r| scdr::bench::median(r)).collect();
-            if json {
-                println!("{}", serde_json::to_string_pretty(&results)?);
-            } else {
-                scdr::bench::print_table(&results);
-            }
+        Command::Schedulers { action, dry_run, json } => finish(json, install::run(action, dry_run, json))?,
+        Command::Config { what } => config_cmd::run(what).await?,
+        Command::Bench { duration, interval_us, load, repeat, json, ndjson, check } => {
+            let args = bench::Args { duration, interval_us, load, repeat, json, ndjson, check };
+            finish(json || ndjson, bench::run(args).await)?
         }
         Command::Agent => {
             tracing_subscriber::fmt()
@@ -291,7 +304,13 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Command::Pause => {
+        Command::Pause { dry_run: true, json } => {
+            let plan = finish(json, report::pause_plan().await.map(|p| {
+                if json { p.print() } else { p.print_text() }
+            }));
+            plan?
+        }
+        Command::Pause { .. } => {
             daemon().await?.pause().await.map_err(not_running)?;
             println!("paused: priorities, unit weights and scheduler restored");
         }
@@ -324,31 +343,4 @@ fn resolve(target: &str) -> anyhow::Result<Vec<u32>> {
         bail!("no process named {target:?}");
     }
     Ok(pids)
-}
-
-fn list(config: &Config, all: bool) {
-    println!("{:>7}  {:<18} {:<16} RULE", "PID", "PROFILE", "NAME");
-    let mut pids = procfs::pids();
-    pids.sort_unstable();
-    for pid in pids {
-        let Ok(info) = ProcInfo::read(pid) else {
-            continue;
-        };
-        if info.kthread {
-            continue;
-        }
-        let (profile, rule) = if config.exceptions.exception(&info).is_some()
-            || config.exceptions.launcher(&info).is_some()
-        {
-            ("(excepted)".to_owned(), String::new())
-        } else if let Some(r) = config.rules.find(&info) {
-            let file = r.source.file_name().unwrap_or_default().to_string_lossy();
-            (r.profile.clone(), format!("{file} #{}", r.index))
-        } else if all {
-            ("-".to_owned(), String::new())
-        } else {
-            continue;
-        };
-        println!("{pid:>7}  {profile:<18} {:<16} {rule}", info.comm);
-    }
 }

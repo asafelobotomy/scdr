@@ -176,7 +176,8 @@ scdrctl list [--all]      # which profile each process would get (offline)
 scdrctl ps                # what scdrd is applying right now, and why
 scdrctl pause | resume    # restore everything / start again (polkit)
 scdrctl role background off   # switch a role off or on (polkit)
-scdrctl check             # validate config files
+scdrctl check [--json]    # validate config files
+scdrctl config show       # the settings made in the widget; set|unset|reset change them (add --dry-run to preview)
 systemctl reload scdrd    # or: scdrctl reload (root)
 ```
 

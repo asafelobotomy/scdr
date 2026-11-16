@@ -10,13 +10,34 @@ ColumnLayout {
     id: section
 
     required property var host
-    property alias field: ruleField
-    property alias profile: profileCombo
+    property string ruleCheck: ""
     readonly property var rules: host.settings ? host.settings.layerRules : []
 
     visible: host.ready && host.settings !== null
     Layout.fillWidth: true
     spacing: 6
+
+    function add() {
+        const profile = section.host.profileNames[profileCombo.currentIndex] || "";
+        section.ruleCheck = Logic.checkRuleName(ruleField.text);
+        if (section.ruleCheck === "" && Logic.checkProfile(profile) !== "")
+            section.ruleCheck = Logic.checkProfile(profile);
+        if (section.ruleCheck !== "")
+            return;
+        const name = ruleField.text;
+        section.host.edit("rules", layer => Logic.addRule(layer, profile, name), () => {
+            ruleField.text = "";
+            section.ruleCheck = "";
+        });
+    }
+
+    // The profile an added rule gets starts out as "desktop", when there is one.
+    Connections {
+        target: section.host
+        function onProfileNamesChanged() {
+            profileCombo.currentIndex = Math.max(0, section.host.profileNames.indexOf("desktop"));
+        }
+    }
 
     SettingRow {
         settingId: "rules"
@@ -39,8 +60,8 @@ ColumnLayout {
             maximumLength: 64
             enabled: section.host.busy === ""
             Layout.fillWidth: true
-            onTextChanged: section.host.ruleCheck = text === "" ? "" : Logic.checkRuleName(text)
-            onAccepted: section.host.addRule()
+            onTextChanged: section.ruleCheck = text === "" ? "" : Logic.checkRuleName(text)
+            onAccepted: section.add()
         }
         UqComboBox {
             id: profileCombo
@@ -51,13 +72,13 @@ ColumnLayout {
         QQC2.Button {
             objectName: "rule-add"
             text: "Add rule"
-            enabled: section.host.busy === "" && ruleField.text !== "" && section.host.ruleCheck === ""
-            onClicked: section.host.addRule()
+            enabled: section.host.busy === "" && ruleField.text !== "" && section.ruleCheck === ""
+            onClicked: section.add()
         }
     }
     UqLabel {
-        visible: section.host.ruleCheck !== ""
-        text: section.host.ruleCheck
+        visible: section.ruleCheck !== ""
+        text: section.ruleCheck
         color: section.host.errorColor
         wrapMode: Text.Wrap
         Layout.fillWidth: true

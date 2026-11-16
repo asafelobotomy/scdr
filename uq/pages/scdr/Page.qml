@@ -1,22 +1,27 @@
-// The Scheduling page for uQ Settings: scdr's state, its boosts and the profile each role gives,
-// the focus agent, the CPU scheduler (with trials and the installer), the kernel scheduler's
-// knobs, CPU pressure, profiles, and rules. Same settings as the Plasma widget's pages. Reads
-// follow scdr's State (watched); every change is applied at once over D-Bus, with long deadlines
-// since it may wait for a password. Pure logic is in the .js files; every piece of text goes
-// through UqLabel.
+// The Scheduling page for uQ Settings (uq_api = 3), laid out like Settings' own pages: six tabs of
+// cards. Overview (state, CPU pressure, boosted apps, what scdr sees), Roles, Scheduler, Rules
+// (yours, profiles, files, Explain), Tools (check, reload, benchmark, import) and Preferences
+// (every other setting, followed live from scdr's files). Reads follow scdr's State (watched);
+// profile, rule and scheduler changes are applied at once over D-Bus, with long deadlines since
+// they may wait for a password; everything else is a command of `scdrctl` (page.toml) that uQ
+// previews and confirms. Pure logic is in the .js files; every piece of text goes through UqLabel.
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import org.uq.settings
 import "logic.js" as Logic
+import "plans.js" as Plans
 import "rules.js" as Rules
 import "words.js" as Words
 
-Item {
+SettingsPage {
     id: page
 
+    pageId: "scdr"
+
     property var ctx
-    /// The search row to scroll to (from [[setting]] ids).
+    property var theme
+    /// The [[setting]] row Settings search jumped to; the rows flash, and their tab opens.
     property string highlight
 
     // What was last read.
@@ -33,25 +38,24 @@ Item {
     property var profileNames: []
     // Goes up with every read of the settings, so controls that snapped back show them again.
     property int revision: 0
-    property string ruleCheck: ""
+    // The settings files as `scdrctl config show` reads them (Plans.configView), the facts from
+    // the daemon's Status, and the key of the preference whose change is running.
+    property var config: Plans.configView(null)
+    property int configRevision: 0
+    property var facts: []
+    property string workingKey: ""
+    property var prefNotes: ({})
     // Callbacks that arrive after the page is gone do nothing.
     property var life: ({ alive: true })
     Component.onDestruction: life.alive = false
 
     readonly property alias confirmDialog: confirm
-    readonly property alias flick: scroller
     readonly property bool ready: view.status === "ready" && !settingsDown
     readonly property bool down: view.status === "not-running" || settingsDown
     readonly property string mutedColor: colorOf("text_muted", "#707070")
     readonly property string errorColor: colorOf("error", "#c00000")
     readonly property string advancedText: [view.detail, settings ? settings.loaderError : "", settingsDown ? "" : settingsError]
         .filter(s => s).join("\n")
-    readonly property var sections: ({ "status": statusSection, "roles": rolesSection, "follow-focus": followSection,
-                                        "role-profiles": roleProfilesSection, "scheduler": schedulerSection,
-                                        "available-schedulers": availableSection, "kernel-tuning": kernelSection,
-                                        "pressure": pressureSection, "system": pressureSection.systemRow,
-                                        "profiles": profilesSection, "rules": rulesSection, "file-rules": fileRulesSection })
-
     function live(fn) {
         const life = page.life;
         return result => {
@@ -95,6 +99,8 @@ Item {
         // scdr may have been started from elsewhere: read its settings again.
         if (page.view.status === "ready" && (page.settingsDown || page.settings === null))
             page.ctx.dbus.call("Settings", [], page.live(page.onSettings));
+        if (page.view.status === "ready" && page.facts.length === 0)
+            page.readStatus();
     }
 
     function onAgent(result) {
@@ -118,12 +124,8 @@ Item {
             return;
         page.settings = s;
         page.revision++;
-        if (JSON.stringify(s.profiles) !== JSON.stringify(page.profileNames)) {
+        if (JSON.stringify(s.profiles) !== JSON.stringify(page.profileNames))
             page.profileNames = s.profiles;
-            rulesSection.profile.currentIndex = Math.max(0, s.profiles.indexOf("desktop"));
-        }
-        if (page.highlight !== "")
-            Qt.callLater(page.scrollTo, page.highlight);
     }
 
     function refresh() {
@@ -132,6 +134,22 @@ Item {
         page.ctx.command.run("state", [], page.live(page.onState));
         page.ctx.command.run("agent-state", [], page.live(page.onAgent));
         page.ctx.dbus.call("Settings", [], page.live(page.onSettings));
+        page.readStatus();
+    }
+
+    function onConfig(result) {
+        if (page.skippable(result))
+            return;
+        page.config = Plans.configView(result);
+        page.configRevision++;
+    }
+
+    // What the daemon says about the system, for the Overview.
+    function readStatus() {
+        if (page.ctx)
+            page.ctx.dbus.call("Status", [], page.live(result => {
+                page.facts = Plans.statusFacts(result);
+            }));
     }
 
     onCtxChanged: {
@@ -139,8 +157,9 @@ Item {
             return;
         page.ctx.command.watch("state", page.live(page.onState));
         page.ctx.command.watch("agent-state", page.live(page.onAgent));
+        page.ctx.command.watch("config", page.live(page.onConfig));
         page.ctx.dbus.call("Settings", [], page.live(page.onSettings));
-        availableSection.findInstaller();
+        page.readStatus();
     }
 
     // ---- Changes ----
@@ -154,6 +173,90 @@ Item {
             return false;
         }
         return true;
+    }
+
+    // One of scdrctl's commands (confirmed and previewed by uQ), then a fresh read of everything.
+    function command(area, id, args, after) {
+        page.busy = area;
+        page.setProblem(area, "");
+        page.ctx.command.run(id, args, page.live(result => {
+            const ok = page.finish(area, result);
+            if (ok && after)
+                after(result);
+            page.refresh();
+        }));
+    }
+
+    // One D-Bus write that reports its answer to `after`, then a fresh read of everything.
+    function dbusWrite(area, method, args, after) {
+        page.busy = area;
+        page.setProblem(area, "");
+        page.ctx.dbus.call(method, args, page.live(result => {
+            if (page.finish(area, result) && after)
+                after(result);
+            page.refresh();
+        }));
+    }
+
+    // One setting of the Preferences tab: `arg` is the new value as `config set` takes it, or
+    // undefined to drop the value made here. scdr's refusal is shown under the row.
+    function setPref(row, arg) {
+        if (page.workingKey !== "" || !page.ctx)
+            return;
+        const key = row.key;
+        let id = "config-unset";
+        let args = [key];
+        if (arg !== undefined) {
+            const text = Plans.setArg(row, arg);
+            const why = Plans.setProblem(key, text);
+            if (why !== "") {
+                page.notePref(key, why);
+                return;
+            }
+            id = "config-set";
+            args = [key, text];
+        }
+        page.notePref(key, "");
+        page.workingKey = key;
+        page.ctx.command.run(id, args, page.live(result => {
+            page.workingKey = "";
+            if (Plans.isCancelled(result))
+                return;
+            const env = Plans.envelope(result);
+            if (!env.ok)
+                page.notePref(key, env.error);
+            page.ctx.command.run("config", [], page.live(page.onConfig));
+            page.refresh();
+        }));
+    }
+
+    function notePref(key, text) {
+        const copy = {};
+        for (const k in page.prefNotes)
+            copy[k] = page.prefNotes[k];
+        if (text === "")
+            delete copy[key];
+        else
+            copy[key] = text;
+        page.prefNotes = copy;
+    }
+
+    // Drops every setting, rule and profile made here; uQ shows what goes (a preview) first.
+    function resetMine() {
+        if (page.workingKey !== "" || !page.ctx)
+            return;
+        page.notePref("reset", "");
+        page.workingKey = "reset";
+        page.ctx.command.run("config-reset", [], page.live(result => {
+            page.workingKey = "";
+            if (Plans.isCancelled(result))
+                return;
+            const env = Plans.envelope(result);
+            if (!env.ok)
+                page.notePref("reset", env.error);
+            page.ctx.command.run("config", [], page.live(page.onConfig));
+            page.refresh();
+        }));
     }
 
     // One D-Bus write, then a fresh read of everything.
@@ -190,25 +293,11 @@ Item {
         }));
     }
 
-    function addRule() {
-        const profile = page.profileNames[rulesSection.profile.currentIndex] || "";
-        page.ruleCheck = Logic.checkRuleName(rulesSection.field.text);
-        if (page.ruleCheck === "" && Logic.checkProfile(profile) !== "")
-            page.ruleCheck = Logic.checkProfile(profile);
-        if (page.ruleCheck !== "")
-            return;
-        const name = rulesSection.field.text;
-        page.edit("rules", layer => Logic.addRule(layer, profile, name), () => {
-            rulesSection.field.text = "";
-            page.ruleCheck = "";
-        });
-    }
-
     // `rule` is an entry of settings.layerRules.
     function removeRule(rule) {
         const index = rule.index;
         const key = rule.key;
-        confirm.ask(Words.confirmText("rule-remove", rule.name), () => page.edit("rules", layer => Rules.removeRule(layer, index, key)));
+        confirm.ask(Words.confirmText("rule-remove", rule.name), () => page.edit("rules", layer => Rules.removeRule(layer, index, key)), Plans.removeRulePlan(rule));
     }
 
     function setAgent(on) {
@@ -229,97 +318,62 @@ Item {
         }));
     }
 
-    function scrollTo(id) {
-        const item = page.sections[id];
-        if (!item || !item.visible)
-            return;
-        const y = item.mapToItem(scroller.contentItem, 0, 0).y;
-        scroller.contentY = Math.max(0, Math.min(y, scroller.contentHeight - scroller.height));
-    }
-
-    onHighlightChanged: Qt.callLater(page.scrollTo, page.highlight)
+    banners: [
+        Banner {
+            objectName: "banner-down"
+            visible: page.down
+            text: "scdr isn't running. It changes how much CPU time each app gets; start it to use most of this page."
+            buttonText: "Start scdr"
+            buttonEnabled: page.busy === ""
+            tone: page.errorColor
+            onClicked: page.start()
+        },
+        Banner {
+            objectName: "banner-config"
+            visible: !page.config.ready && page.config.error !== "" && !page.down
+            text: "scdr's files don't load together: " + page.config.error
+            tone: page.errorColor
+        },
+        Banner {
+            objectName: "banner-trial"
+            visible: page.settings !== null && page.settings.trial !== null
+            text: Words.trialText(page.settings ? page.settings.trial : null)
+            buttonText: "Stop trying"
+            buttonEnabled: page.busy === ""
+            tone: page.mutedColor
+            onClicked: page.write("trial", "EndSchedulerTrial", [])
+        }
+    ]
 
     ConfirmDialog {
         id: confirm
+        mutedColor: page.mutedColor
+        errorColor: page.errorColor
     }
 
-    Flickable {
-        id: scroller
-        anchors.fill: parent
-        contentWidth: width
-        contentHeight: column.implicitHeight + 32
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        QQC2.ScrollBar.vertical: QQC2.ScrollBar {}
+    OverviewTab {
+        host: page
+    }
+    RolesTab {
+        host: page
+    }
+    SchedulerTab {
+        host: page
+    }
+    RulesTab {
+        host: page
+    }
+    ToolsTab {
+        host: page
+    }
 
-        ColumnLayout {
-            id: column
-            x: 16
-            y: 16
-            width: scroller.width - 32
-            spacing: 20
+    SettingsTab {
+        title: "Preferences"
+        iconName: "configure"
 
-            StatusSection {
-                id: statusSection
-                host: page
-            }
-            RolesSection {
-                id: rolesSection
-                host: page
-            }
-            FollowSection {
-                id: followSection
-                host: page
-            }
-            RoleProfilesSection {
-                id: roleProfilesSection
-                host: page
-            }
-            SchedulerSection {
-                id: schedulerSection
-                host: page
-            }
-            AvailableSection {
-                id: availableSection
-                host: page
-            }
-            KernelSection {
-                id: kernelSection
-                host: page
-            }
-            PressureSection {
-                id: pressureSection
-                host: page
-            }
-            ProfilesSection {
-                id: profilesSection
-                host: page
-            }
-            RulesSection {
-                id: rulesSection
-                host: page
-            }
-            FileRulesSection {
-                id: fileRulesSection
-                host: page
-            }
-            // ---- Advanced details ----
-            ColumnLayout {
-                visible: page.advancedText !== ""
-                Layout.fillWidth: true
-                QQC2.Button {
-                    flat: true
-                    text: "Advanced details"
-                    onClicked: page.showAdvanced = !page.showAdvanced
-                }
-                UqLabel {
-                    visible: page.showAdvanced
-                    text: page.advancedText
-                    color: page.mutedColor
-                    wrapMode: Text.Wrap
-                    Layout.fillWidth: true
-                }
-            }
+        PrefsSection {
+            host: page
+            Layout.fillWidth: true
         }
     }
 }

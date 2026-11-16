@@ -1,5 +1,4 @@
-// When apps that aren't focused get the background role (CPU pressure thresholds), and the
-// system-wide disk-weight and autogroup switches.
+// When apps that aren't focused get the background role (CPU pressure thresholds).
 import QtQuick
 import QtQuick.Layouts
 import org.uq.settings
@@ -11,7 +10,6 @@ ColumnLayout {
 
     required property var host
     readonly property var s: host.settings
-    property alias systemRow: systemRow
     readonly property var thresholds: [
         { key: "high", label: "Turn on above", suffix: " %" },
         { key: "low", label: "Turn off below", suffix: " %" },
@@ -59,34 +57,6 @@ ColumnLayout {
         color: section.host.mutedColor
         wrapMode: Text.Wrap
         Layout.fillWidth: true
-    }
-    SettingRow {
-        id: systemRow
-        settingId: "system"
-        label: "System-wide switches"
-        highlight: section.host.highlight
-        Layout.fillWidth: true
-        Layout.topMargin: 8
-    }
-    Repeater {
-        model: [{ key: "iocost", label: "Disk weights (iocost)" }, { key: "autogroup", label: "Autogroup" }]
-        delegate: RowLayout {
-            id: switchRow
-            required property var modelData
-            Layout.fillWidth: true
-            UqLabel {
-                text: switchRow.modelData.label
-                Layout.preferredWidth: 180
-            }
-            ChoiceBox {
-                objectName: "system-" + switchRow.modelData.key
-                choices: section.s ? Profiles.switchChoices(section.s, switchRow.modelData.key) : []
-                current: section.s ? Profiles.switchCurrent(section.s, switchRow.modelData.key) : null
-                enabled: section.host.busy === ""
-                Layout.fillWidth: true
-                onPicked: v => section.host.edit("pressure", layer => Profiles.setSwitch(layer, switchRow.modelData.key, v))
-            }
-        }
     }
     AreaStatus {
         host: section.host

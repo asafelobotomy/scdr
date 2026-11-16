@@ -1,9 +1,9 @@
 # Tests for the uQ Settings page (`uq/pages/scdr/`)
 
 - `logic.test.mjs`, `editors.test.mjs`, `load-logic.mjs`, `fixtures/`: Node tests of the page's
-  `.js` files (`logic.js`, `words.js`, `schedulers.js`, `profiles.js`, `rules.js`) and the manifest.
+  `.js` files (`logic.js`, `plans.js`, `words.js`, `schedulers.js`, `profiles.js`, `rules.js`) and the manifest.
   Run: `node --test 'tests/uq/*.test.mjs'` (Node 22; the quotes matter, a bare directory fails).
-- `tst_page.qml` and `tst_editors.qml`, sharing `PageHarness.qml` (the page in a Loader with a
+- `tst_page.qml`, `tst_editors.qml` and `tst_tabs.qml`, sharing `PageHarness.qml` (the page in a Loader with a
   `FakeContext.qml`), with `stub/`: the page offscreen, no uQ needed.
   Run: `QT_QPA_PLATFORM=offscreen qmltestrunner -import tests/uq/stub -input tests/uq`
   (`/usr/lib/qt6/bin/qmltestrunner` on Arch; `/usr/bin/qmltestrunner` may be Qt 5's).
@@ -11,7 +11,7 @@
 - `install_test.sh`: the package installs exactly the page's files.
 
 `FakeContext.qml`, `stub/` and `tst_components.qml` are copied from uQ's
-`templates/settings-page-tests/` at v0.3.0-rc.1. Refresh them when moving to a newer uQ.
+`templates/settings-page-tests/` at uQ commit fc7ab68 (uq_api 3). Refresh them when moving to a newer uQ.
 Nothing here is installed.
 
 ---

@@ -25,7 +25,9 @@ function commands() {
         id: str("id"),
         confirm: str("confirm")?.replace(/\\"/g, '"'),
         hasArgs: /^args = /m.test(body),
-        patterns: [...body.matchAll(/pattern = "((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]),
+        preview: str("preview"),
+        patterns: [...body.matchAll(/pattern = '([^']*)'/g)].map((m) => m[1]),
+        args: [...body.matchAll(/\{ name = "(\w+)", pattern = '([^']*)' \}/g)].map((m) => ({ name: m[1], pattern: m[2] })),
       };
     });
 }
@@ -52,6 +54,9 @@ test("parses_state_fixture", () => {
   assert.equal(W.pressureText(s), "CPU busy: 34 %");
   assert.equal(W.managedText(s), "12 apps managed");
   assert.equal(W.boostedLine(s.boosted[0]), "firefox — desktop");
+  assert.equal(W.boostedDetail({ name: "x", profile: "desktop", role: "foreground", app: "" }), "desktop · the app you're using");
+  assert.equal(W.boostedDetail({ name: "x", profile: "game", role: "", app: "" }), "game · your rule");
+  assert.equal(W.boostedCount(1), "1 app is boosted now");
 });
 
 test("reads_busctl_wrapper_and_failures", () => {
@@ -255,13 +260,23 @@ test("write_error_cases", () => {
 });
 
 test("patterns_match_manifest", () => {
-  // The only commands that take arguments would carry these; today none does, so any pattern
-  // in page.toml must still be one of the logic's own.
-  const known = [L.RULE_NAME, L.PROFILE, L.CHOICE];
-  for (const c of commands()) {
-    for (const p of c.patterns) assert.ok(known.includes(p), `${c.id}: ${p}`);
-  }
-  assert.deepEqual(commands().filter((c) => c.hasArgs), []);
+  // Only the settings files, the importers' previews take arguments; each pattern must start with
+  // ^ and end with $ (uQ refuses others), and let through what the page sends but nothing hostile.
+  const withArgs = commands().filter((c) => c.hasArgs).map((c) => c.id);
+  assert.deepEqual(withArgs, ["config-set", "config-unset", "preview-import-ananicy", "preview-import-system76"]);
+  for (const c of commands()) for (const p of c.patterns) assert.ok(p.startsWith("^") && p.endsWith("$"), `${c.id}: ${p}`);
+  const by = Object.fromEntries(commands().map((c) => [c.id, c]));
+  const key = new RegExp(by["config-set"].args[0].pattern);
+  const value = new RegExp(by["config-set"].args[1].pattern);
+  const path = new RegExp(by["preview-import-ananicy"].args[0].pattern);
+  for (const ok of ["system.iocost", "system.rescan_secs", "split.apps", "split.memory_high", "exceptions.launchers"]) assert.ok(key.test(ok), ok);
+  for (const bad of ["pressure.high", "profile.desktop.nice", "system.iocost\n", "--force", "system", "split.apps.x"]) assert.ok(!key.test(bad), bad);
+  for (const ok of ["on", "off", "120", "[]", "claude, aider", "2G", "80%"]) assert.ok(value.test(ok), ok);
+  for (const bad of ["-1", "--x", "a\nb", "x".repeat(401), ""]) assert.ok(!value.test(bad), JSON.stringify(bad).slice(0, 20));
+  for (const ok of ["/etc/ananicy.d", "/home/me/my rules/a.kdl"]) assert.ok(path.test(ok), ok);
+  for (const bad of ["rules.d", "-x", "/a\nb", "/".repeat(402)]) assert.ok(!path.test(bad), JSON.stringify(bad).slice(0, 20));
+  // The keys the page may set are exactly the Preferences rows.
+  assert.equal(by["config-unset"].args[0].pattern, by["config-set"].args[0].pattern);
 });
 
 test("rejects_hostile_args", () => {
@@ -280,34 +295,45 @@ test("rejects_hostile_args", () => {
 test("confirms_match_plan", () => {
   const confirms = Object.fromEntries(commands().filter((c) => c.confirm).map((c) => [c.id, c.confirm]));
   assert.deepEqual(confirms, {
+    "pause": "Pause scdr? Every app's priority goes back to what it was until you resume.",
+    "config-reset": "Drop every setting, rule and profile you made here? scdr's own files apply again.",
+    "bench": "Run the benchmark? Every CPU runs flat out for about a minute, so the screen may stutter.",
     "agent-off": "Stop following the focused window? The app you're using no longer gets a boost.",
     "installer-install": "Install the extra CPU schedulers (scx-scheds and scx-tools)? Your package manager asks for your password.",
     "installer-update": "Update the whole system, the schedulers included? Arch doesn't update one package alone.",
     "installer-git": "Build the newest schedulers from the AUR (scx-scheds-git)? This can take several minutes.",
   });
-  // The D-Bus writes that destroy or pause ask inside the page, with these texts.
+  // Every command with a confirm that changes something shows what it would do first (uQ renders
+  // the preview command's plan); the benchmark changes nothing, so it has none.
+  for (const c of commands().filter((c) => c.confirm && c.id !== "bench" && c.id !== "agent-off")) {
+    assert.ok(c.preview, `${c.id} has a preview`);
+    const p = commands().find((x) => x.id === c.preview);
+    assert.ok(p && !p.confirm && !p.preview, `${c.id}: ${c.preview} is a plain read`);
+  }
+  // The D-Bus writes that destroy ask inside the page, with these texts and what they change.
   assert.deepEqual(plain(W.CONFIRMS), {
-    "pause": "Pause scdr? Every app's priority goes back to normal until you resume.",
     "rule-remove": "Remove your rule for %s?",
     "profile-remove": "Delete the profile %s?",
     "profile-revert": "Undo your changes to the profile %s?",
   });
   assert.equal(W.confirmText("rule-remove", "steam*"), "Remove your rule for steam*?");
   assert.equal(W.confirmText("rule-remove", "$&"), "Remove your rule for $&?");
-  assert.equal(W.confirmText("pause"), W.CONFIRMS.pause);
 });
 
 test("dbus_writes_allowlisted", () => {
   const { methods, timeouts } = dbusTable();
-  const reads = ["Status", "Processes", "Settings"];
-  const writes = ["Pause", "Resume", "SetRoleEnabled", "SetSettings", "TryScheduler", "EndSchedulerTrial"];
+  const reads = ["Status", "Processes", "Settings", "Explain"];
+  const writes = ["Reload", "Resume", "SetRoleEnabled", "SetSettings", "TryScheduler", "EndSchedulerTrial"];
   assert.deepEqual([...methods].sort(), [...reads, ...writes].sort());
   assert.deepEqual(Object.keys(timeouts).sort(), [...writes].sort());
   for (const w of writes) assert.equal(timeouts[w], 120000, w);
-  // Only the page's own commands run: reads of state, the follow-focus and start switches, and
-  // the scheduler installer.
+  // Only the page's own commands run: reads, the follow-focus and start switches, the scheduler
+  // installer with its previews, Pause, the settings files, the benchmark and the importers.
   assert.deepEqual(commands().map((c) => c.id), ["state", "agent-state", "agent-on", "agent-off", "start",
-    "installer-which", "installer-install", "installer-update", "installer-git"]);
+    "installer-which", "installer-install", "installer-update", "installer-git",
+    "preview-installer-install", "preview-installer-update", "preview-installer-git",
+    "preview-pause", "pause", "config", "config-set", "config-unset", "preview-config-reset", "config-reset",
+    "check", "list", "list-all", "bench-check", "bench", "preview-import-ananicy", "preview-import-system76"]);
 });
 
 test("manifest_text_is_plain", () => {

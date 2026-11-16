@@ -63,6 +63,7 @@ Item {
 
         function test_try_and_stop() {
             load();
+            h.tab("Scheduler");
             const tryLavd = h.findNamed("try-lavd");
             tryVerify(() => tryLavd.enabled);
             verify(!h.findNamed("try-rusty").enabled, "a scheduler that isn't installed can't be tried");
@@ -70,7 +71,7 @@ Item {
             tryVerify(() => h.writes().length === 1);
             compare(h.writes()[0].slice(0, 3), ["call", "TryScheduler", ["lavd:auto"]]);
             const mode = h.findNamed("mode-bpfland");
-            verify(mode.visible);
+            tryVerify(() => mode.visible);
             verify(!h.findNamed("mode-lavd").visible);
             tryVerify(() => h.findNamed("try-bpfland").enabled);
             mode.currentIndex = 1;
@@ -124,8 +125,9 @@ Item {
             compare(h.sentLayer().roles, { foreground: "" });
         }
 
-        function test_pressure_and_system() {
+        function test_pressure() {
             load();
+            h.tab("Roles");
             const high = h.findNamed("pressure-high");
             tryVerify(() => high.check.enabled);
             high.check.checked = true;
@@ -138,9 +140,6 @@ Item {
             low.chosen(25);
             tryVerify(() => h.findLabel("“Turn off below” has to be lower than “Turn on above”.") !== null);
             compare(h.writes().length, 0);
-            h.pick(h.findNamed("system-autogroup"), "Off: nice values apply across the whole system");
-            tryVerify(() => h.writes().length === 1);
-            compare(h.sentLayer().system, { autogroup: false });
         }
 
         function test_kernel_tuning() {
@@ -232,17 +231,6 @@ Item {
             toggle.clicked();
             tryVerify(() => h.findLabel("background — name = baloo*") !== null);
             verify(h.findLabel("/usr/share/scdr/scdr.toml") !== null);
-        }
-
-        function test_new_sections_scroll() {
-            load();
-            for (const id of ["profiles", "available-schedulers", "file-rules", "system"]) {
-                h.page.highlight = id;
-                tryVerify(() => {
-                    const y = h.page.sections[id].mapToItem(h.page.flick, 0, 0).y;
-                    return y >= -1 && y < h.page.flick.height;
-                }, 3000, id + " is in view");
-            }
         }
     }
 }

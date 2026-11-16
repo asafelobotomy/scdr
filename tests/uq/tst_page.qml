@@ -35,18 +35,23 @@ Item {
             loaded();
             verify(h.fake.calls.some(c => c[0] === "watch" && c[1] === "state"));
             verify(h.fake.calls.some(c => c[0] === "watch" && c[1] === "agent-state"));
+            verify(h.fake.calls.some(c => c[0] === "watch" && c[1] === "config"));
             verify(h.fake.calls.some(c => c[0] === "call" && c[1] === "Settings"));
+            verify(h.fake.calls.some(c => c[0] === "call" && c[1] === "Status"));
             compare(h.writes().length, 0);
         }
 
         function test_shows_state() {
             load();
             loaded();
-            verify(h.findLabel("firefox — desktop") !== null);
-            verify(h.findLabel("<b>x</b> — realtime") !== null);
-            verify(h.findLabel("CPU busy: 34 % · 12 apps managed") !== null);
+            verify(h.findLabel("firefox") !== null);
+            verify(h.findLabel("desktop · the app you're using") !== null);
+            verify(h.findLabel("realtime · apps playing sound") !== null);
+            verify(h.findLabel("CPU busy: 34 %") !== null);
+            verify(h.findLabel("2 apps are boosted now") !== null);
             verify(h.findLabel("Running now: bpfland") !== null);
             verify(h.findLabel("steam* → game") !== null);
+            verify(h.findLabel("0.4.2") !== null && h.findLabel("2 h") !== null, "the facts from Status");
         }
 
         function test_a_change_reads_again() {
@@ -106,7 +111,7 @@ Item {
             tryVerify(() => h.findLabel("scdr isn't running") !== null);
             const start = h.findButton("Start scdr");
             verify(start !== null);
-            verify(h.findLabel("Boosted now") !== null && !h.findLabel("Boosted now").visible);
+            verify(h.findNamed("banner-down").visible);
             start.clicked();
             tryVerify(() => h.fake.calls.some(c => c[0] === "run" && c[1] === "start"));
             compare(h.writes().length, 0);
@@ -129,21 +134,28 @@ Item {
             tryVerify(() => h.findLabel("scdr's state couldn't be read.") !== null);
         }
 
-        function test_pause_asks_first() {
-            load();
+        function test_pause_is_a_previewed_command() {
+            load({ commands: { "preview-pause": { code: 0, output: h.plan({ summary: "Pause scheduling" }) } } });
             loaded();
-            const dlg = h.loader.item.confirmDialog;
+            // uQ asks (and shows the preview) before the command runs: declined, it changes nothing.
+            h.fake.confirms = false;
             h.findButton("Pause").clicked();
-            compare(dlg.message, "Pause scdr? Every app's priority goes back to normal until you resume.");
+            tryVerify(() => h.fake.calls.some(c => c[0] === "run" && c[1] === "pause"));
             wait(50);
             compare(h.writes().length, 0);
-            dlg.reject();
-            wait(50);
-            compare(h.writes().length, 0);
+            verify(h.findLabel("Cancelled") === null);
+            h.fake.confirms = true;
+            h.fake.calls = [];
             h.findButton("Pause").clicked();
-            dlg.accept();
-            tryVerify(() => h.writes().length === 1);
-            compare(h.writes()[0].slice(0, 3), ["call", "Pause", []]);
+            tryVerify(() => h.fake.calls.filter(c => c[0] === "run" && c[1] === "state").length > 0);
+            compare(h.writes().length, 0);
+        }
+
+        function test_pause_that_fails_says_why() {
+            load({ commands: { "pause": { code: 1, error: "exit 1: Error: org.freedesktop.DBus.Error.AccessDenied: not authorized" } } });
+            loaded();
+            h.findButton("Pause").clicked();
+            tryVerify(() => h.findLabel("You need to enter your password to change this.") !== null);
         }
 
         function test_resume_is_direct() {
@@ -157,10 +169,12 @@ Item {
         function test_rule_add_validates() {
             load();
             loaded();
+            h.tab("Rules");
             const field = h.findNamed("rule-name");
             field.text = "-rf";
             tryVerify(() => h.findLabel("Use letters, numbers, spaces and . _ + * ? @ - only, starting with a letter or number. 64 characters at most.") !== null);
-            h.loader.item.addRule();
+            h.tab("Rules");
+            verify(!h.findNamed("rule-add").enabled, "a bad name can't be added");
             wait(50);
             compare(h.writes().length, 0);
             field.text = "kate";
@@ -179,10 +193,12 @@ Item {
         function test_rule_remove_asks_first() {
             load();
             loaded();
+            h.tab("Rules");
             const dlg = h.loader.item.confirmDialog;
-            verify(h.findNamed("remove-2") !== null && h.findNamed("remove-2").visible, "a rule with other conditions can be removed too");
+            tryVerify(() => h.findNamed("remove-2") !== null && h.findNamed("remove-2").visible, 3000, "a rule with other conditions can be removed too");
             h.findNamed("remove-1").clicked();
             compare(dlg.message, "Remove your rule for steam*?");
+            compare(dlg.plan.changes[0].detail, "no longer sent to the game profile");
             wait(50);
             compare(h.writes().length, 0);
             dlg.reject();
@@ -237,20 +253,9 @@ Item {
         function test_untrusted_text_plain() {
             load();
             loaded();
-            const label = h.findLabel("<b>x</b> — realtime");
+            const label = h.findLabel("<b>x</b>");
             verify(label !== null);
             compare(label.textFormat, Text.PlainText);
-        }
-
-        function test_highlight_scrolls() {
-            load();
-            loaded();
-            const page = h.loader.item;
-            compare(page.flick.contentY, 0);
-            page.highlight = "rules";
-            tryVerify(() => page.flick.contentY > 0);
-            const y = page.sections.rules.mapToItem(page.flick, 0, 0).y;
-            verify(y >= -1 && y < page.flick.height, "the rules section is in view: " + y);
         }
     }
 }

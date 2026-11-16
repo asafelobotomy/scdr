@@ -4,6 +4,7 @@
 
 use anyhow::{Context, bail};
 use clap::ValueEnum;
+use scdr::plan::{Change, Plan};
 use scdr::schedulers::on_path;
 use std::process::Command;
 
@@ -83,12 +84,46 @@ impl Installer {
     }
 }
 
-pub(crate) fn run(action: Action, dry_run: bool) -> anyhow::Result<()> {
+const WHAT: [(Action, &str, &str); 3] = [
+    (Action::Install, "Install scx-scheds and scx-tools", "adds the sched_ext schedulers and scx_loader"),
+    (Action::Update, "Update the whole system", "Arch doesn't update one package alone"),
+    (Action::Git, "Build scx-scheds-git from the AUR", "the newest schedulers; this can take several minutes"),
+];
+
+/// What `action` would run, for people who asked for `--dry-run --json`.
+fn plan(action: Action) -> Plan {
+    let Some(installer) = Installer::detect() else {
+        return Plan::refused("No package installer", format!("No package installer found (pamac, PackageKit or pacman); install {} yourself.", PACKAGES.join(" and ")));
+    };
+    let Some((_, label, why)) = WHAT.iter().find(|(a, _, _)| *a == action) else {
+        return Plan::new(format!("{} is the installer", installer.name()), Vec::new());
+    };
+    match installer.command(action) {
+        Ok(argv) => Plan::new(
+            *label,
+            vec![
+                Change::new("Runs", argv.join(" "), format!("through {}, which asks for your password", installer.name()), None),
+                Change::new("Effect", *why, "scdr itself changes nothing as root", None),
+            ],
+        ),
+        Err(e) => Plan::refused(*label, e.to_string()),
+    }
+}
+
+pub(crate) fn run(action: Action, dry_run: bool, json: bool) -> anyhow::Result<()> {
+    if json && dry_run {
+        plan(action).print();
+        return Ok(());
+    }
     let Some(installer) = Installer::detect() else {
         bail!("no package installer found (pamac, PackageKit or pacman); install {} yourself", PACKAGES.join(" and "));
     };
     if action == Action::Which {
-        println!("{}", installer.name());
+        if json {
+            println!("{}", serde_json::json!({ "ok": true, "installer": installer.name() }));
+        } else {
+            println!("{}", installer.name());
+        }
         return Ok(());
     }
     let argv = installer.command(action)?;
@@ -102,6 +137,9 @@ pub(crate) fn run(action: Action, dry_run: bool) -> anyhow::Result<()> {
         .with_context(|| format!("starting {}", argv[0]))?;
     if !status.success() {
         bail!("{} exited with {status}", argv[0]);
+    }
+    if json {
+        println!("{}", serde_json::json!({ "ok": true }));
     }
     Ok(())
 }

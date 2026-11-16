@@ -5,7 +5,6 @@
 
 // Questions the page asks itself before a D-Bus write (uQ asks for [[command]]s on its own).
 var CONFIRMS = {
-    "pause": "Pause scdr? Every app's priority goes back to normal until you resume.",
     "rule-remove": "Remove your rule for %s?",
     "profile-remove": "Delete the profile %s?",
     "profile-revert": "Undo your changes to the profile %s?"
@@ -37,6 +36,16 @@ function managedText(state) {
 
 function boostedLine(b) {
     return b.name + " — " + b.profile;
+}
+
+function boostedCount(n) {
+    return n + (n === 1 ? " app is boosted now" : " apps are boosted now");
+}
+
+// "desktop · the app you're using" for a boosted app: its profile, and the role or rule behind it.
+function boostedDetail(b) {
+    var why = b.role !== "" ? roleLabel(b.role).toLowerCase() : "your rule";
+    return b.profile + " · " + why;
 }
 
 function trialText(trial) {

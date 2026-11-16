@@ -56,9 +56,9 @@ impl Paths {
         Ok(Value::Object(merged))
     }
 
-    /// Validates `doc` on top of the lower files, then replaces the layer.
-    /// Returns the resulting config.
-    pub fn write_layer(&self, doc: &Value) -> Result<Config, ConfigError> {
+    /// Validates `doc` on top of the lower files, without writing anything.
+    /// Returns the layer as it would be saved (TOML text) and the resulting config.
+    pub fn check_layer(&self, doc: &Value) -> Result<(String, Config), ConfigError> {
         let path = self.layer();
         let size = doc.to_string().len();
         if size > MAX_DOCUMENT_BYTES {
@@ -67,7 +67,6 @@ impl Paths {
                 format!("settings document is {size} bytes; the limit is {MAX_DOCUMENT_BYTES}"),
             ));
         }
-        let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let text = to_toml(doc).map_err(|e| ConfigError::invalid(&path, e))?;
         let mut sources = Vec::new();
         for file in self.lower_files() {
@@ -75,8 +74,17 @@ impl Paths {
                 .map_err(|source| ConfigError::Io { path: file.clone(), source })?;
             sources.push((file, contents));
         }
-        sources.push((path.clone(), text.clone()));
+        sources.push((path, text.clone()));
         let config = Config::from_sources(sources)?;
+        Ok((text, config))
+    }
+
+    /// Validates `doc` on top of the lower files, then replaces the layer.
+    /// Returns the resulting config.
+    pub fn write_layer(&self, doc: &Value) -> Result<Config, ConfigError> {
+        let path = self.layer();
+        let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (text, config) = self.check_layer(doc)?;
 
         let io = |source| ConfigError::Io { path: path.clone(), source };
         if text.is_empty() {

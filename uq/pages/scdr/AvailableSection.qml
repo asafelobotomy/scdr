@@ -27,6 +27,18 @@ ColumnLayout {
         }));
     }
 
+    Component.onCompleted: {
+        if (section.host.ctx)
+            section.findInstaller();
+    }
+
+    Connections {
+        target: section.host
+        function onCtxChanged() {
+            section.findInstaller();
+        }
+    }
+
     function install(id) {
         section.installing = true;
         section.installStatus = "Waiting for the installer…";

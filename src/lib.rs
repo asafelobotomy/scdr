@@ -7,6 +7,7 @@ pub mod config;
 pub mod dbus;
 pub mod explain;
 pub mod import;
+pub mod plan;
 pub mod policy;
 pub mod procfs;
 pub mod rivals;

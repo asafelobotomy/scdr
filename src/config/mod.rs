@@ -13,6 +13,7 @@
 //! same name, add to `[exceptions]`, and have their rules tried first.
 
 pub mod layer;
+pub mod edit;
 pub(crate) mod policy;
 mod profile;
 mod roles;
