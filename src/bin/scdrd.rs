@@ -142,24 +142,23 @@ async fn main() -> anyhow::Result<()> {
 
     // A session agent leaving the bus (crash, logout) drops its roles at once;
     // the periodic check in the rescan arm stays as a backstop.
+    // Every bus call at startup is bounded: a peer that never answers (power-profiles-daemon
+    // starting at the same moment, say) must not stop the loop from ever running.
     let bus_proxy = match &bus {
-        Some(conn) => zbus::fdo::DBusProxy::new(conn).await.ok(),
+        Some(conn) => bounded(zbus::fdo::DBusProxy::new(conn)).await.and_then(Result::ok),
         None => None,
     };
     let mut owner_changes = match &bus_proxy {
-        Some(p) => p.receive_name_owner_changed().await.ok(),
+        Some(p) => bounded(p.receive_name_owner_changed()).await.and_then(Result::ok),
         None => None,
     };
 
     // Follow power-profiles-daemon when it is running; roles can depend on it.
-    let ppd = match &bus {
-        Some(conn) => power_profiles(conn, &service).await,
+    let mut ppd_changes = match &bus {
+        Some(conn) => follow_power_profiles(conn, &service).await,
         None => None,
     };
-    let mut ppd_changes = match &ppd {
-        Some(p) => Some(p.receive_active_profile_changed().await),
-        None => None,
-    };
+    let mut ppd_retry = 0u32;
 
     let rescan_interval = |secs: u64, polling: bool| match (secs, polling) {
         (0, false) => None,
@@ -241,6 +240,13 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             _ = tick.tick() => {
+                // power-profiles-daemon may come up after us: look again every 30 s.
+                ppd_retry += 1;
+                if ppd_changes.is_none() && ppd_retry % 15 == 0 {
+                    if let Some(conn) = &bus {
+                        ppd_changes = follow_power_profiles(conn, &service).await;
+                    }
+                }
                 service.lock().unwrap().save_ledger();
                 policy_step(&mut policy, bus.as_ref(), &service).await;
                 if let Some(conn) = &bus {
@@ -325,18 +331,39 @@ async fn policy_step(policy: &mut Policy, bus: Option<&zbus::Connection>, servic
     svc.policy_report = report;
 }
 
-async fn power_profiles(
+/// How long a bus call may take while scdrd starts or looks for a peer.
+const BUS_CALL_LIMIT: Duration = Duration::from_secs(3);
+
+/// `fut`, or `None` once it has taken longer than `BUS_CALL_LIMIT`.
+async fn bounded<T>(fut: impl std::future::Future<Output = T>) -> Option<T> {
+    tokio::time::timeout(BUS_CALL_LIMIT, fut).await.ok()
+}
+
+/// Reads power-profiles-daemon's profile and returns its change stream, or `None` when it isn't
+/// there (or doesn't answer in time). It is only asked when it already owns its bus name, so
+/// looking never starts it and never waits for it.
+async fn follow_power_profiles(
     conn: &zbus::Connection,
     service: &Arc<Mutex<Service>>,
-) -> Option<PowerProfilesProxy<'static>> {
-    let proxy = PowerProfilesProxy::new(conn).await.ok()?;
-    match proxy.active_profile().await {
-        Ok(p) => {
+) -> Option<zbus::proxy::PropertyStream<'static, String>> {
+    let dbus = bounded(zbus::fdo::DBusProxy::new(conn)).await?.ok()?;
+    let name = zbus::names::BusName::try_from("net.hadess.PowerProfiles").ok()?;
+    if !bounded(dbus.name_has_owner(name)).await?.unwrap_or(false) {
+        tracing::info!("power-profiles-daemon not running; looking again later");
+        return None;
+    }
+    let proxy = bounded(PowerProfilesProxy::new(conn)).await?.ok()?;
+    match bounded(proxy.active_profile()).await {
+        Some(Ok(p)) => {
             service.lock().unwrap().set_power_profile(Some(p));
-            Some(proxy)
+            bounded(proxy.receive_active_profile_changed()).await
         }
-        Err(e) => {
+        Some(Err(e)) => {
             tracing::info!("power-profiles-daemon not available ({e})");
+            None
+        }
+        None => {
+            tracing::warn!("power-profiles-daemon didn't answer in {BUS_CALL_LIMIT:?}; looking again later");
             None
         }
     }
