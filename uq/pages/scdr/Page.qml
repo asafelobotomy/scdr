@@ -29,6 +29,7 @@ SettingsPage {
     property var settings: null
     property string settingsError: ""
     property bool settingsDown: false
+    property string whyDown: ""
     property bool agentKnown: false
     property bool agentOn: false
     // What is in flight ("" when nothing is) and why the last change failed, by area.
@@ -96,6 +97,10 @@ SettingsPage {
         if (page.skippable(result))
             return;
         page.view = Logic.readState(result);
+        if (page.view.status === "not-running")
+            page.ctx.command.run("daemon-why", [], page.live(r => { page.whyDown = Logic.daemonWhy(r); }));
+        else
+            page.whyDown = "";
         // scdr may have been started from elsewhere: read its settings again.
         if (page.view.status === "ready" && (page.settingsDown || page.settings === null))
             page.ctx.dbus.call("Settings", [], page.live(page.onSettings));

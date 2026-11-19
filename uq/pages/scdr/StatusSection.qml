@@ -41,6 +41,14 @@ ColumnLayout {
         Layout.fillWidth: true
     }
     UqLabel {
+        visible: host.down && host.whyDown !== ""
+        objectName: "why-down"
+        text: host.whyDown
+        color: host.errorColor
+        wrapMode: Text.Wrap
+        Layout.fillWidth: true
+    }
+    UqLabel {
         visible: host.down
         text: "scdr changes how much CPU time each app gets. Start it to use this page."
         color: host.mutedColor

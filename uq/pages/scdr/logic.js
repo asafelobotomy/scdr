@@ -348,6 +348,33 @@ function agentEnabled(result) {
     return null;
 }
 
+// Why scdrd isn't running, in plain words, from `systemctl show scdrd.service` (KEY=value lines).
+// "" when it can't be told. Another priority daemon makes scdrd stop with status 3 on purpose.
+function daemonWhy(result) {
+    if (!result || typeof result.output !== "string")
+        return "";
+    var p = {};
+    result.output.split("\n").forEach(function (line) {
+        var i = line.indexOf("=");
+        if (i > 0)
+            p[line.slice(0, i)] = line.slice(i + 1).trim();
+    });
+    if (p.LoadState === "not-found")
+        return "scdr's service isn't installed. Reinstall the scdr package.";
+    if (p.ActiveState === "failed" || p.Result === "exit-code") {
+        if (p.ExecMainStatus === "3")
+            return "scdr stopped because another program already manages priorities (ananicy-cpp or system76-scheduler). Turn that one off, then start scdr.";
+        return "scdr started and then stopped (exit " + (p.ExecMainStatus || "?") + "). Its log says why: run journalctl -u scdrd in a terminal.";
+    }
+    if (p.ActiveState === "active")
+        return "scdr's service is running but not answering. Reinstall the scdr package to restore its permissions.";
+    if (p.ActiveState === "inactive" && (p.UnitFileState === "disabled" || p.UnitFileState === "static"))
+        return "scdr is installed but turned off. Start scdr turns it on, now and at every boot.";
+    if (p.ActiveState === "inactive")
+        return "scdr is stopped. Start scdr runs it again.";
+    return "";
+}
+
 function notRunning(error) {
     return /ServiceUnknown|NameHasNoOwner|not activatable|not provided by any|is not running|no owner|name .* not exist/i.test(String(error || ""));
 }

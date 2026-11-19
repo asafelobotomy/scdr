@@ -329,7 +329,7 @@ test("dbus_writes_allowlisted", () => {
   for (const w of writes) assert.equal(timeouts[w], 120000, w);
   // Only the page's own commands run: reads, the follow-focus and start switches, the scheduler
   // installer with its previews, Pause, the settings files, the benchmark and the importers.
-  assert.deepEqual(commands().map((c) => c.id), ["state", "agent-state", "agent-on", "agent-off", "start",
+  assert.deepEqual(commands().map((c) => c.id), ["state", "agent-state", "agent-on", "agent-off", "daemon-why", "start",
     "installer-which", "installer-install", "installer-update", "installer-git",
     "preview-installer-install", "preview-installer-update", "preview-installer-git",
     "preview-pause", "pause", "config", "config-set", "config-unset", "preview-config-reset", "config-reset",
@@ -384,4 +384,15 @@ test("long_rule_names_can_be_removed", () => {
   assert.equal(rule.name.length, 120);
   assert.equal(rule.rawName, name);
   assert.equal(R.removeRule(JSON.parse(text).layer, 0, rule.key).ok, true);
+});
+
+test("daemonWhy explains why scdrd isn't running in plain words", () => {
+  const out = (output) => L.daemonWhy({ output });
+  assert.match(out("LoadState=not-found\nActiveState=inactive\n"), /isn't installed/);
+  assert.match(out("LoadState=loaded\nActiveState=failed\nResult=exit-code\nExecMainStatus=3\n"), /another program/);
+  assert.match(out("LoadState=loaded\nActiveState=failed\nResult=exit-code\nExecMainStatus=1\n"), /exit 1/);
+  assert.match(out("LoadState=loaded\nActiveState=active\nSubState=running\n"), /not answering/);
+  assert.match(out("LoadState=loaded\nActiveState=inactive\nUnitFileState=disabled\n"), /turned off/);
+  assert.equal(L.daemonWhy({ error: "x" }), "");
+  assert.equal(L.daemonWhy(null), "");
 });

@@ -174,6 +174,13 @@ output = "none"
 timeout_ms = 20000
 confirm = "Stop following the focused window? The app you're using no longer gets a boost."
 
+# Why scdrd isn't running, read from systemd without a password (words in logic.js, daemonWhy).
+[[command]]
+id = "daemon-why"
+argv = ["/usr/bin/systemctl", "show", "scdrd.service", "--no-pager", "-p", "LoadState,UnitFileState,ActiveState,SubState,Result,ExecMainStatus"]
+output = "text"
+timeout_ms = 5000
+
 [[command]]
 id = "start"
 argv = ["/usr/bin/systemctl", "enable", "--now", "scdrd.service"]
