@@ -126,7 +126,11 @@ pub async fn run() -> anyhow::Result<()> {
         .serve_at(SESSION_PATH, Session1 { shared: shared.clone() })
         .build()
         .await?;
-    let system = zbus::Connection::system().await?;
+    // scdrd or logind not answering must not hold the agent (and its stop) forever.
+    let system = zbus::connection::Builder::system()
+        .method_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .await?;
 
     let kwin_path = start_foreground(&session, &shared).await;
     tokio::spawn({

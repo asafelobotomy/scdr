@@ -35,7 +35,11 @@ jobs:
       - run: scripts/check-uq-diag.sh 1.0.1 src/uq_diag.rs
       - run: scripts/check-diag-codes.sh uq/diag/scdr.toml src
       - run: cargo clippy --locked --all-targets -- -D warnings
+      # tests/busy_bus.rs runs scdrd on a private dbus-daemon.
+      - run: sudo apt-get install -y --no-install-recommends dbus-daemon
       - run: cargo test --locked
+        env:
+          SCDR_TEST_DBUS: "1"
 
   uq:
     name: uQ Settings page

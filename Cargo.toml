@@ -1,6 +1,6 @@
 [package]
 name = "scdr"
-version = "0.5.3"
+version = "0.5.4"
 edition = "2024"
 rust-version = "1.85"
 description = "Process scheduling and priority daemon for EEVDF and sched_ext kernels"
@@ -11,7 +11,7 @@ publish = false
 
 [[bin]]
 name = "scdrd"
-path = "src/bin/scdrd.rs"
+path = "src/bin/scdrd/main.rs"
 
 [[bin]]
 name = "scdrctl"
@@ -35,3 +35,6 @@ zbus = { version = "6", default-features = false, features = ["tokio", "proxy", 
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
