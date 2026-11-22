@@ -1,4 +1,4 @@
-//! uq-diag 1.0.0
+//! uq-diag 1.0.1
 //!
 //! uQ's log format and crash records for a Rust program. Vendor this file unchanged (see uQ's
 //! `native/uq-diag/README.md`); it needs only `tracing`, `tracing-subscriber` (with `env-filter`)
@@ -27,7 +27,7 @@ use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
 use tracing_subscriber::registry::LookupSpan;
 
 /// The version of this file; `check-uq-diag.sh` compares it with the one a repo pins.
-pub const VERSION: &str = "1.0.0";
+pub const VERSION: &str = "1.0.1";
 
 /// How lines look: [`Style::Journal`] under systemd, [`Style::Terminal`] otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,10 +139,13 @@ pub fn code_in(msg: &str) -> Option<&str> {
     let mut rest = msg;
     while let Some(open) = rest.find('[') {
         let after = &rest[open + 1..];
-        if let Some(close) = after.find(']')
-            && is_code(&after[..close])
+        // No let chains: apps on edition 2021 vendor this file too.
+        if let Some(code) = after
+            .find(']')
+            .map(|close| &after[..close])
+            .filter(|c| is_code(c))
         {
-            return Some(&after[..close]);
+            return Some(code);
         }
         rest = after;
     }
