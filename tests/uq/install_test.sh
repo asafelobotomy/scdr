@@ -39,7 +39,9 @@ $got"
 check_folder uq/pages/scdr settings/pages/scdr
 check_folder uq/widgets/scdr shell/widgets/scdr
 
-others=$(cd "$tmp/root/usr/share/uq" && find . -type f | sort | grep -v -e '^\./settings/pages/scdr/' -e '^\./shell/widgets/scdr/' || true)
+# The problem-code list for uQ (uq/diag/scdr.toml) is the one other file, as it is.
+cmp -s uq/diag/scdr.toml "$tmp/root/usr/share/uq/diag/scdr.toml" || fail "diag/scdr.toml is not installed as uq/diag/scdr.toml"
+others=$(cd "$tmp/root/usr/share/uq" && find . -type f | sort | grep -v -e '^\./settings/pages/scdr/' -e '^\./shell/widgets/scdr/' -e '^\./diag/scdr\.toml$' || true)
 [ -z "$others" ] || fail "other files under usr/share/uq: $others"
 
 echo PASS
