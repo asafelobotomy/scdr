@@ -207,7 +207,7 @@ impl Service {
         }
         match write_atomic(&path, &text) {
             Ok(()) => self.hints_written = Some(text),
-            Err(e) => tracing::warn!("can't write {}: {e}", path.display()),
+            Err(e) => tracing::warn!("[SCDR-021] can't write {}: {e}", path.display()),
         }
     }
 

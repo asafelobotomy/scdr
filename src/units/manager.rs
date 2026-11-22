@@ -73,13 +73,13 @@ pub(super) fn manager_command(user: Option<&str>, program: &str, args: &[&str]) 
                             Fallback::Everyone => {
                                 AS_USER.store(false, Ordering::Relaxed);
                                 tracing::warn!(
-                                    "can't run {program} as {user} ({e}); using --machine for every user, which opens a login session per call"
+                                    "[SCDR-012] can't run {program} as {user} ({e}); using --machine for every user, which opens a login session per call"
                                 );
                             }
                             Fallback::ThisUser => {
                                 MACHINE_USERS.lock().unwrap().insert(user.to_owned());
                                 tracing::warn!(
-                                    "can't reach {user}'s manager as {user} ({e}); using --machine for {user}, which opens a login session per call"
+                                    "[SCDR-012] can't reach {user}'s manager as {user} ({e}); using --machine for {user}, which opens a login session per call"
                                 );
                             }
                         }

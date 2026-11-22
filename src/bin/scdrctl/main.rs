@@ -228,6 +228,8 @@ pub(crate) fn not_running(e: zbus::Error) -> anyhow::Error {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
+    // A crash record for uQ's Problems page on a panic (uQ's native/uq-diag).
+    scdr::uq_diag::install_panic_hook("scdrctl");
     // Exit quietly when piped into `head` and the like.
     // SAFETY: restoring the default SIGPIPE disposition before any output.
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
@@ -280,16 +282,7 @@ async fn main() -> anyhow::Result<()> {
             finish(json || ndjson, bench::run(args).await)?
         }
         Command::Agent => {
-            tracing_subscriber::fmt()
-                .with_env_filter(
-                    tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| "info".into()),
-                )
-                .with_writer(std::io::stderr)
-                .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
-                .without_time()
-                .with_target(false)
-                .init();
+            scdr::uq_diag::init("scdr-agent", "info");
             scdr::agent::run().await?;
         }
         Command::Ps { json } => {

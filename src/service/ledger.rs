@@ -118,7 +118,7 @@ impl Service {
         }
         match write_atomic(&path, &json) {
             Ok(()) => self.ledger_written = Some(json),
-            Err(e) => tracing::warn!("can't write {}: {e}", path.display()),
+            Err(e) => tracing::warn!("[SCDR-013] can't write {}: {e}", path.display()),
         }
     }
 
@@ -137,7 +137,7 @@ impl Service {
         let ledger: Ledger = match serde_json::from_str(&text) {
             Ok(l) => l,
             Err(e) => {
-                tracing::warn!("ignoring unreadable {}: {e}", path.display());
+                tracing::warn!("[SCDR-014] ignoring unreadable {}: {e}", path.display());
                 let _ = fs::remove_file(&path);
                 return;
             }
@@ -147,7 +147,7 @@ impl Service {
             return;
         }
         tracing::warn!(
-            "previous run didn't stop cleanly: restoring {} processes, {} units",
+            "[SCDR-015] previous run didn't stop cleanly: restoring {} processes, {} units",
             ledger.procs.len(),
             ledger.units.len()
         );
@@ -161,7 +161,7 @@ impl Service {
             match units::get(&u.id) {
                 Ok(now) if now == u.applied => {
                     if let Err(e) = units::set(&u.id, &u.original, &now) {
-                        tracing::warn!("{}: can't restore {}: {e}", u.id, u.original);
+                        tracing::warn!("[SCDR-016] {}: can't restore {}: {e}", u.id, u.original);
                     }
                 }
                 _ => {} // gone, or changed by something else since

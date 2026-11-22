@@ -82,7 +82,7 @@ impl Policy {
             Err(e) => {
                 let msg = format!("sched_ext: scx_loader unavailable ({e}); install scx-tools");
                 if self.scx_error.as_deref() != Some(&msg) {
-                    tracing::warn!("{msg}");
+                    tracing::warn!("[SCDR-001] {msg}");
                     self.scx_error = Some(msg.clone());
                 }
                 return msg;
@@ -110,7 +110,7 @@ impl Policy {
             match switch_on(bus, &want).await {
                 Ok(()) => tracing::info!("sched_ext: {current} -> {want}"),
                 Err(e) => {
-                    tracing::warn!("sched_ext: can't switch to {want}: {e}");
+                    tracing::warn!("[SCDR-002] sched_ext: can't switch to {want}: {e}");
                     return format!("sched_ext: {current} (switch to {want} failed: {e})");
                 }
             }
@@ -132,7 +132,7 @@ impl Policy {
         if now.as_ref() == Some(&applied) && applied != original {
             match switch_on(bus, &original).await {
                 Ok(()) => tracing::info!("sched_ext: restored {original}"),
-                Err(e) => tracing::warn!("sched_ext: can't restore {original}: {e}"),
+                Err(e) => tracing::warn!("[SCDR-003] sched_ext: can't restore {original}: {e}"),
             }
         }
     }
@@ -291,12 +291,12 @@ fn active_preempt(s: &str) -> Option<String> {
 fn write_eevdf(current: &Eevdf, target: &Eevdf) {
     if let Some(us) = target.base_slice_us.filter(|t| Some(*t) != current.base_slice_us) {
         if let Err(e) = fs::write(BASE_SLICE, (u64::from(us) * 1000).to_string()) {
-            tracing::warn!("eevdf: can't set base_slice_ns: {e}");
+            tracing::warn!("[SCDR-004] eevdf: can't set base_slice_ns: {e}");
         }
     }
     if let Some(p) = target.preempt.as_ref().filter(|p| Some(*p) != current.preempt.as_ref()) {
         if let Err(e) = fs::write(PREEMPT, p) {
-            tracing::warn!("eevdf: can't set preempt={p}: {e}");
+            tracing::warn!("[SCDR-004] eevdf: can't set preempt={p}: {e}");
         }
     }
 }

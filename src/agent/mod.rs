@@ -133,7 +133,7 @@ pub async fn run() -> anyhow::Result<()> {
         let (session, shared) = (session.clone(), shared.clone());
         async move {
             if let Err(e) = gamemode::watch(session, shared).await {
-                tracing::warn!("not following GameMode: {e:#}");
+                tracing::warn!("[SCDR-006] not following GameMode: {e:#}");
             }
         }
     });
@@ -142,7 +142,7 @@ pub async fn run() -> anyhow::Result<()> {
         let (system, shared) = (system.clone(), shared.clone());
         async move {
             if let Err(e) = lock::watch(system, shared).await {
-                tracing::warn!("not following the screen lock: {e:#}");
+                tracing::warn!("[SCDR-007] not following the screen lock: {e:#}");
             }
         }
     });
@@ -194,7 +194,7 @@ async fn start_foreground(session: &zbus::Connection, shared: &Shared) -> bool {
         tracing::info!("following focus through {name}");
         tokio::spawn(async move {
             if let Err(e) = fut.await {
-                tracing::warn!("{name} focus tracking stopped: {e:#}");
+                tracing::warn!("[SCDR-005] {name} focus tracking stopped: {e:#}");
             }
         });
     };
@@ -216,7 +216,7 @@ async fn start_foreground(session: &zbus::Connection, shared: &Shared) -> bool {
         let session = session.clone();
         tokio::spawn(async move {
             if let Err(e) = kwin::watch(session).await {
-                tracing::warn!("KWin script watcher stopped: {e:#}");
+                tracing::warn!("[SCDR-008] KWin script watcher stopped: {e:#}");
             }
         });
         true
@@ -272,7 +272,7 @@ impl Pusher {
             if self.failing {
                 tracing::debug!("still failing: {msg}");
             } else {
-                tracing::warn!("could not update scdrd, retrying every {PUSH_RETRY:?}: {msg}");
+                tracing::warn!("[SCDR-009] could not update scdrd, retrying every {PUSH_RETRY:?}: {msg}");
             }
             self.failing = true;
         }

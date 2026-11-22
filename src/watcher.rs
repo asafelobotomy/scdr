@@ -166,14 +166,14 @@ fn run(mut sock: OwnedFd, tx: UnboundedSender<Event>) {
             match err.raw_os_error() {
                 Some(libc::EINTR) => continue,
                 Some(libc::ENOBUFS) => {
-                    tracing::warn!("process event buffer overflowed; rescanning");
+                    tracing::warn!("[SCDR-010] process event buffer overflowed; rescanning");
                     if tx.send(Event::Overrun).is_err() {
                         return;
                     }
                     continue;
                 }
                 _ => {
-                    tracing::error!("process event socket failed: {err}; reopening");
+                    tracing::warn!("[SCDR-011] process event socket failed: {err}; reopening");
                     match resubscribe() {
                         Ok(s) => {
                             sock = s;
@@ -184,7 +184,7 @@ fn run(mut sock: OwnedFd, tx: UnboundedSender<Event>) {
                             continue;
                         }
                         Err(e) => {
-                            tracing::error!("can't reopen the process event socket ({e}); polling /proc instead");
+                            tracing::warn!("[SCDR-011] can't reopen the process event socket ({e}); polling /proc instead");
                             let _ = tx.send(Event::Lost);
                             return;
                         }
@@ -253,7 +253,7 @@ fn parse_cn_msg(p: &[u8]) -> Option<Event> {
             // Subscription ack; a non-zero err means the kernel refused us.
             let err = u32_at(d, 0)?;
             if err != 0 {
-                tracing::error!("proc connector refused subscription: errno {err}");
+                tracing::warn!("[SCDR-011] proc connector refused subscription: errno {err}");
             }
             return None;
         }

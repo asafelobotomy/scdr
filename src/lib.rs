@@ -17,4 +17,7 @@ pub mod sched;
 pub mod service;
 pub mod system;
 pub mod units;
+// uQ's log format and crash records (uQ's native/uq-diag; don't edit, copy a new release over).
+#[rustfmt::skip]
+pub mod uq_diag;
 pub mod watcher;

@@ -21,7 +21,7 @@ impl Service {
         for dev in std::mem::take(&mut self.iocost_enabled) {
             match system::set_iocost(&dev, false) {
                 Ok(()) => tracing::info!("disabled iocost on {dev} again"),
-                Err(e) => tracing::warn!("could not disable iocost on {dev}: {e}"),
+                Err(e) => tracing::warn!("[SCDR-019] could not disable iocost on {dev}: {e}"),
             }
         }
     }
@@ -33,7 +33,7 @@ impl Service {
                 if !self.dry_run {
                     match system::set_autogroup(orig) {
                         Ok(()) => tracing::info!("restored sched_autogroup_enabled={}", orig as u8),
-                        Err(e) => tracing::warn!("could not restore sched_autogroup_enabled: {e}"),
+                        Err(e) => tracing::warn!("[SCDR-019] could not restore sched_autogroup_enabled: {e}"),
                     }
                 }
             }
@@ -49,7 +49,7 @@ impl Service {
         if self.dry_run {
             tracing::info!("would set sched_autogroup_enabled={}", want as u8);
         } else if let Err(e) = system::set_autogroup(want) {
-            tracing::warn!("could not set sched_autogroup_enabled: {e}");
+            tracing::warn!("[SCDR-019] could not set sched_autogroup_enabled: {e}");
         } else {
             tracing::info!("set sched_autogroup_enabled={}", want as u8);
         }
@@ -78,7 +78,7 @@ impl Service {
                     tracing::info!("enabled iocost on {} ({})", disk.name, disk.dev);
                     self.iocost_enabled.push(disk.dev);
                 }
-                Err(e) => tracing::warn!("could not enable iocost on {}: {e}", disk.name),
+                Err(e) => tracing::warn!("[SCDR-019] could not enable iocost on {}: {e}", disk.name),
             }
         }
     }
