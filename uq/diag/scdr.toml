@@ -1,0 +1,195 @@
+# scdr's problem codes for uQ (`uqctl log`, `uqctl explain`, Settings › Problems). Installed as
+# /usr/share/uq/diag/scdr.toml. A code never changes meaning: set `retired = true` on one nothing
+# logs any more, and give a new problem the next number.
+app = "scdr"
+units = ["scdr-session.service"]
+system_units = ["scdrd.service"]
+
+[[code]]
+id = "SCDR-001"
+severity = "warn"
+title = "sched_ext schedulers can't be switched"
+means = "scdr couldn't reach scx_loader, the service that loads sched_ext schedulers, so profiles that pick a scheduler keep the kernel's default one."
+fix = "Install scx-tools (sudo pacman -S scx-tools) and enable it: sudo systemctl enable --now scx_loader."
+
+[[code]]
+id = "SCDR-002"
+severity = "warn"
+title = "A scheduler couldn't be started"
+means = "scdr asked scx_loader for a sched_ext scheduler and it refused, so the running scheduler stays as it was."
+fix = "Run `scxctl get` to see what is loaded, and check that your kernel supports sched_ext (linux-zen and linux-cachyos do)."
+
+[[code]]
+id = "SCDR-003"
+severity = "warn"
+title = "The scheduler from before couldn't be put back"
+means = "When a profile ended, scdr couldn't switch back to the scheduler that ran before it."
+fix = "Run `scxctl switch` with the one you want, or restart scx_loader."
+
+[[code]]
+id = "SCDR-004"
+severity = "warn"
+title = "A kernel scheduler setting couldn't be changed"
+means = "scdr couldn't write one of the kernel's own scheduler settings (EEVDF's slice or preemption), so it stays at the kernel's value."
+fix = "Your kernel may not have that setting. `scdrctl status` shows what is applied."
+
+[[code]]
+id = "SCDR-005"
+severity = "warn"
+title = "scdr lost track of the focused window"
+means = "scdr's session agent stopped hearing which window has focus, so the app in front may not get its boost until it reconnects."
+fix = "It retries on its own. If it stays off, restart it: systemctl --user restart scdr-session."
+
+[[code]]
+id = "SCDR-006"
+severity = "warn"
+title = "scdr isn't following GameMode"
+means = "scdr couldn't listen to GameMode, so games started with gamemoderun aren't treated as games."
+fix = "Check that gamemode is installed and its daemon runs; scdr's game rules still match games by name."
+
+[[code]]
+id = "SCDR-007"
+severity = "warn"
+title = "scdr isn't following the screen lock"
+means = "scdr couldn't see when the screen locks, so it keeps the session's priorities while you're away."
+fix = "Nothing breaks. If you want it, restart the agent: systemctl --user restart scdr-session."
+
+[[code]]
+id = "SCDR-008"
+severity = "warn"
+title = "scdr's KWin script isn't running"
+means = "On Plasma, scdr learns the focused window from a small KWin script, which couldn't be loaded, so focus boosts are off."
+fix = "Log out and in, or restart KWin. `scdrctl status` says whether focus tracking is on."
+
+[[code]]
+id = "SCDR-009"
+severity = "warn"
+title = "The session agent can't reach scdrd"
+means = "scdr's per-session agent couldn't pass on what is in front to the scdrd service, so focus boosts wait. It keeps trying."
+fix = "Check that scdrd runs: systemctl status scdrd. Start it with sudo systemctl enable --now scdrd."
+
+[[code]]
+id = "SCDR-010"
+severity = "info"
+title = "scdr missed some process events"
+means = "Programs started faster than scdr could read about them, so it looked at every process again. Nothing is lost."
+fix = "Nothing to do."
+
+[[code]]
+id = "SCDR-011"
+severity = "warn"
+title = "scdr is watching processes the slow way"
+means = "The kernel's process event feed isn't available, so scdr looks for new programs every few seconds instead of at once. New apps get their priorities a little later."
+fix = "Usually a kernel without CONFIG_PROC_EVENTS or a sandbox around scdrd. Restarting scdrd tries again."
+
+[[code]]
+id = "SCDR-012"
+severity = "warn"
+title = "scdr reaches your user services a slower way"
+means = "scdr couldn't talk to your user session's service manager directly, so it uses a fallback that opens a short login session each time."
+fix = "Nothing breaks. Restarting scdrd after logging in usually lets it talk directly again."
+
+[[code]]
+id = "SCDR-013"
+severity = "warn"
+title = "scdr couldn't save its state"
+means = "scdr couldn't write its runtime state or its record of what it changed, so a pause or a clean undo after a crash may not survive a restart."
+fix = "Check that /run/scdr exists and the disk isn't full; restart scdrd."
+
+[[code]]
+id = "SCDR-014"
+severity = "warn"
+title = "scdr's saved state couldn't be read"
+means = "A state file scdr left before was unreadable, so it started without it."
+fix = "Nothing to do; scdr writes a new one."
+
+[[code]]
+id = "SCDR-015"
+severity = "warn"
+title = "scdr stopped without tidying up last time"
+means = "scdrd ended unexpectedly, so on start it put back the priorities and unit settings it had changed."
+fix = "Nothing to do. If it happens often, copy a report from uQ Settings' Problems page."
+
+[[code]]
+id = "SCDR-016"
+severity = "warn"
+title = "A service's settings couldn't be put back"
+means = "scdr couldn't restore a systemd unit's CPU or IO settings to what they were before it changed them."
+fix = "Run `systemctl revert` on the unit named in the line, or restart it."
+
+[[code]]
+id = "SCDR-017"
+severity = "warn"
+title = "A service's settings couldn't be applied"
+means = "scdr couldn't set a systemd unit's CPU or IO weights for its profile. It tries again shortly."
+fix = "Usually it settles by itself. `scdrctl status` shows which units are managed."
+
+[[code]]
+id = "SCDR-018"
+severity = "warn"
+title = "Background tools couldn't be moved aside"
+means = "scdr couldn't move an agent's tools into their own slice, so they compete with the app in front. It tries again shortly."
+fix = "Usually it settles by itself; restart scdr-session if it doesn't."
+
+[[code]]
+id = "SCDR-019"
+severity = "warn"
+title = "A kernel tuning couldn't be applied"
+means = "scdr couldn't change a kernel setting it manages (IO cost control or autogroup), so that setting stays at the system's value."
+fix = "Your kernel or disk may not support it. `scdrctl status` shows what is applied."
+
+[[code]]
+id = "SCDR-020"
+severity = "warn"
+title = "A program's priority couldn't be changed"
+means = "scdr couldn't apply or undo a profile on one program (its nice level, IO class or scheduler policy), usually because it had just exited."
+fix = "Nothing to do for a program that closed. If one app is always refused, check its rule with `scdrctl explain`."
+
+[[code]]
+id = "SCDR-021"
+severity = "warn"
+title = "Focus hints for scx_devbox couldn't be written"
+means = "scdr couldn't pass the focused app to the scx_devbox scheduler, so it schedules without knowing what is in front."
+fix = "Check that /run/scdr exists; restart scdrd."
+
+[[code]]
+id = "SCDR-022"
+severity = "error"
+title = "Another priority daemon is running"
+means = "Another program that sets process priorities (such as ananicy) is running. It and scdr would undo each other, so scdrd won't start."
+fix = "Import its rules (scdrctl import ananicy /etc/ananicy.d --output /etc/scdr/rules.d/50-ananicy.toml), disable it with systemctl disable --now, then start scdrd."
+
+[[code]]
+id = "SCDR-023"
+severity = "warn"
+title = "Another program also boosts games"
+means = "A program that also boosts games or switches schedulers is running alongside scdr, so they may fight over games."
+fix = "Leave one in charge: turn off scdr's game role and [sched_ext], or stop the other program."
+
+[[code]]
+id = "SCDR-024"
+severity = "warn"
+title = "scdr has no rules"
+means = "scdrd found no configuration files, so it manages nothing."
+fix = "Reinstall scdr to get its default rules in /usr/share/scdr, or add yours under /etc/scdr."
+
+[[code]]
+id = "SCDR-025"
+severity = "error"
+title = "New scdr settings were rejected"
+means = "After a change to scdr's configuration, the new files had a mistake, so scdrd keeps running with the settings it had."
+fix = "Run `scdrctl check` to see the mistake, fix the file it names, and scdrd picks it up."
+
+[[code]]
+id = "SCDR-026"
+severity = "error"
+title = "The widget's scdr settings were set aside"
+means = "The settings saved from scdr's widget or uQ Settings page stopped scdrd from starting, so they were moved to a .bad file and scdrd started without them."
+fix = "Set them again from the widget or uQ Settings. The old file is kept beside the new one for reference."
+
+[[code]]
+id = "SCDR-027"
+severity = "warn"
+title = "Power profiles didn't answer"
+means = "power-profiles-daemon took too long to answer, so scdr can't follow the power profile for now. It asks again later."
+fix = "Check it with powerprofilesctl; restart it with sudo systemctl restart power-profiles-daemon."

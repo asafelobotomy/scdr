@@ -40,17 +40,8 @@ struct Args {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
-        )
-        .with_writer(std::io::stderr)
-        // No colour codes in the journal.
-        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
-        .without_time() // journald adds timestamps
-        .with_target(false)
-        .init();
+    // uQ's log format (`<4>scdrd: [SCDR-…] …` in the journal) and a crash record on a panic.
+    scdr::uq_diag::init("scdrd", "info");
 
     let args = Args::parse();
     // Exit 3 (scdrd.service: RestartPreventExitStatus=3) rather than a
@@ -58,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
     let rivals = scdr::rivals::running(std::path::Path::new("/proc"));
     if !rivals.is_empty() && !args.dry_run {
         tracing::error!(
-            "{} is running: it and scdr would undo each other's priorities. Import its rules \
+            "[SCDR-022] {} is running: it and scdr would undo each other's priorities. Import its rules \
              (scdrctl import ananicy /etc/ananicy.d --output /etc/scdr/rules.d/50-ananicy.toml), \
              then stop and disable it (systemctl disable --now <its unit>) and start scdrd again",
             rivals.join(" and ")
@@ -67,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
     }
     for d in scdr::rivals::overlapping(std::path::Path::new("/proc")) {
         tracing::warn!(
-            "{d} is running: it also boosts games and switches sched_ext schedulers. Leave one of them in \
+            "[SCDR-023] {d} is running: it also boosts games and switches sched_ext schedulers. Leave one of them in \
              charge of games and schedulers (scdr: turn off the game role and [sched_ext])"
         );
     }
@@ -78,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
     };
     let config = load_config(&paths)?;
     if config.files.is_empty() {
-        tracing::warn!("no configuration files found; nothing will be managed");
+        tracing::warn!("[SCDR-024] no configuration files found; nothing will be managed");
     }
     tracing::info!(
         "{} profiles, {} rules from {} files{}",
@@ -111,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
     match watcher::spawn(tx) {
         Ok(()) => service.watcher = "netlink",
         Err(e) => tracing::warn!(
-            "process events unavailable ({e}); falling back to rescans every {}s",
+            "[SCDR-011] process events unavailable ({e}); falling back to rescans every {}s",
             service.config.system.rescan_secs.max(5)
         ),
     }
@@ -259,7 +250,7 @@ async fn main() -> anyhow::Result<()> {
                         tracing::info!("reloading: {} profiles, {} rules", config.profiles.len(), config.rules.len());
                         service.lock().unwrap().reload(config);
                     }
-                    Err(e) => tracing::error!("reload failed, keeping current config: {e}"),
+                    Err(e) => tracing::error!("[SCDR-025] reload failed, keeping current config: {e}"),
                 }
             }
             _ = term.recv() => break,
@@ -295,7 +286,7 @@ fn load_config(paths: &Paths) -> anyhow::Result<Config> {
     }
     match Config::load(paths) {
         Ok(c) => {
-            tracing::error!("{err}; moved the widget's settings to {} and started without them", bad.display());
+            tracing::error!("[SCDR-026] {err}; moved the widget's settings to {} and started without them", bad.display());
             Ok(c)
         }
         Err(_) => {
@@ -363,7 +354,7 @@ async fn follow_power_profiles(
             None
         }
         None => {
-            tracing::warn!("power-profiles-daemon didn't answer in {BUS_CALL_LIMIT:?}; looking again later");
+            tracing::warn!("[SCDR-027] power-profiles-daemon didn't answer in {BUS_CALL_LIMIT:?}; looking again later");
             None
         }
     }

@@ -132,7 +132,7 @@ impl Service {
                 }
             }
             UnitDone::Failed { id, error } => {
-                tracing::warn!("{id}: {error}; retrying in {}s", FAILED_BACKOFF.as_secs());
+                tracing::warn!("[SCDR-017] {id}: {error}; retrying in {}s", FAILED_BACKOFF.as_secs());
                 self.unit_queue.in_flight.remove(&id);
                 self.unit_queue.failed.insert(id, Instant::now() + FAILED_BACKOFF);
             }

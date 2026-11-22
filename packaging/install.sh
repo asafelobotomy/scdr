@@ -26,6 +26,8 @@ done
 install -Dm644 -t "$dest/usr/share/uq/settings/pages/scdr" uq/pages/scdr/*
 # The bar widget for uQ (inert without uQ): the whole folder.
 install -Dm644 -t "$dest/usr/share/uq/shell/widgets/scdr" uq/widgets/scdr/*
+# scdr's problem codes, for uqctl explain and uQ Settings' Problems page (inert without uQ).
+install -Dm644 -t "$dest/usr/share/uq/diag" uq/diag/scdr.toml
 install -Dm644 README.md "$dest/usr/share/doc/scdr/README.md"
 install -Dm644 DESIGN.md "$dest/usr/share/doc/scdr/DESIGN.md"
 install -Dm644 LICENSE "$dest/usr/share/licenses/scdr/LICENSE"

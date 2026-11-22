@@ -138,7 +138,7 @@ fn log_apply(
         }
     } else {
         tracing::warn!(
-            "{} [{}]: {verb} {profile} ({out}): {}",
+            "[SCDR-020] {} [{}]: {verb} {profile} ({out}): {}",
             info.comm,
             info.pid,
             out.errors.join("; ")

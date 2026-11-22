@@ -147,7 +147,7 @@ impl Service {
                 }
             }
             Err(e) => {
-                tracing::warn!("can't move tools into {}: {e}; retrying in {}s", id.unit, FAILED_BACKOFF.as_secs());
+                tracing::warn!("[SCDR-018] can't move tools into {}: {e}; retrying in {}s", id.unit, FAILED_BACKOFF.as_secs());
                 let gone: Vec<(u32, u64)> =
                     self.split.leaders.iter().filter(|(_, u)| **u == id.unit).map(|(k, _)| *k).collect();
                 for k in gone {

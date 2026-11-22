@@ -149,7 +149,7 @@ pub fn run(job: UnitJob) -> UnitDone {
             } else {
                 match units::set_properties(&id, &props) {
                     Ok(()) => tracing::info!("{id}: set {list}"),
-                    Err(e) => tracing::warn!("{id}: can't set {list}: {e}"),
+                    Err(e) => tracing::warn!("[SCDR-017] {id}: can't set {list}: {e}"),
                 }
             }
             UnitDone::Props { id }
@@ -165,7 +165,7 @@ pub fn run(job: UnitJob) -> UnitDone {
                 match units::get(&id) {
                     Ok(now) if now == applied => match units::set(&id, &original, &now) {
                         Ok(()) => tracing::info!("{id}: restored {original}"),
-                        Err(e) => tracing::warn!("{id}: can't restore {original}: {e}"),
+                        Err(e) => tracing::warn!("[SCDR-016] {id}: can't restore {original}: {e}"),
                     },
                     Ok(now) => tracing::info!("{id}: left as {now} (changed by something else)"),
                     Err(_) => {} // unit is gone

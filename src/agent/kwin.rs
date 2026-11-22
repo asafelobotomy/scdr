@@ -83,12 +83,12 @@ pub async fn watch(session: zbus::Connection) -> anyhow::Result<()> {
                 Err(e) => {
                     attempt += 1;
                     if attempt == 1 {
-                        tracing::warn!("loading the KWin script failed, will retry: {e:#}");
+                        tracing::warn!("[SCDR-008] loading the KWin script failed, will retry: {e:#}");
                     } else {
                         tracing::debug!("KWin script load attempt {attempt}: {e:#}");
                     }
                     if attempt >= MAX_ATTEMPTS {
-                        tracing::warn!("giving up on the KWin script until KWin restarts");
+                        tracing::warn!("[SCDR-008] giving up on the KWin script until KWin restarts");
                         pending = false;
                         attempt = 0;
                     }
