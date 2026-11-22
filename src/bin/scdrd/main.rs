@@ -1,10 +1,11 @@
 //! scdrd: the SCDR daemon.
 
+mod peers;
+
 use anyhow::Context;
 use clap::Parser;
 use scdr::config::{Config, Paths};
-use scdr::dbus::{BUS_NAME, Daemon, OBJECT_PATH, PowerProfilesProxy, Published, publish_state};
-use futures_util::{Stream, StreamExt};
+use scdr::dbus::{BUS_NAME, Daemon, OBJECT_PATH, Published, publish_state};
 use scdr::policy::Policy;
 use scdr::service::{Service, cpu_some_avg10};
 use scdr::watcher;
@@ -123,6 +124,8 @@ async fn main() -> anyhow::Result<()> {
             trial: Default::default(),
         };
         let conn = zbus::connection::Builder::system()
+            // No call to a peer may wait forever (scx_loader, systemd, power-profiles-daemon).
+            .method_timeout(peers::BUS_CALL_TIMEOUT)
             .name(BUS_NAME)
             .serve_at(OBJECT_PATH, iface)
             .build()
@@ -135,19 +138,18 @@ async fn main() -> anyhow::Result<()> {
     // the periodic check in the rescan arm stays as a backstop.
     // Every bus call at startup is bounded: a peer that never answers (power-profiles-daemon
     // starting at the same moment, say) must not stop the loop from ever running.
-    let bus_proxy = match &bus {
-        Some(conn) => bounded(zbus::fdo::DBusProxy::new(conn)).await.and_then(Result::ok),
-        None => None,
-    };
-    let mut owner_changes = match &bus_proxy {
-        Some(p) => bounded(p.receive_name_owner_changed()).await.and_then(Result::ok),
-        None => None,
+    //
+    // Signal streams are drained by tasks of their own, never by the loop below (see peers.rs).
+    let mut gone_agents = match &bus {
+        Some(conn) => peers::gone_names(conn).await,
+        None => tokio::sync::mpsc::unbounded_channel().1,
     };
 
     // Follow power-profiles-daemon when it is running; roles can depend on it.
-    let mut ppd_changes = match &bus {
-        Some(conn) => follow_power_profiles(conn, &service).await,
-        None => None,
+    let (ppd_tx, mut ppd_changes) = tokio::sync::mpsc::unbounded_channel::<Option<String>>();
+    let mut ppd_following = match &bus {
+        Some(conn) => peers::follow_power_profiles(conn, &service, ppd_tx.clone()).await,
+        None => false,
     };
     let mut ppd_retry = 0u32;
 
@@ -212,34 +214,37 @@ async fn main() -> anyhow::Result<()> {
             }
             _ = sleep_until(next_rescan.unwrap_or_else(far)), if next_rescan.is_some() => {
                 if let Some(conn) = &bus {
-                    drop_dead_agents(conn, &service).await;
+                    peers::drop_dead_agents(conn, &service).await;
                 }
                 service.lock().unwrap().rescan();
                 next_rescan = rescan_every.map(|d| Instant::now() + d);
             }
-            Some(sig) = next_item(&mut owner_changes) => {
-                if let Ok(args) = sig.args() {
-                    if args.new_owner().is_none() {
-                        service.lock().unwrap().drop_agent(args.name().as_str());
+            Some(name) = gone_agents.recv() => {
+                service.lock().unwrap().drop_agent(&name);
+            }
+            Some(change) = ppd_changes.recv() => match change {
+                Some(profile) => {
+                    service.lock().unwrap().set_power_profile(Some(profile));
+                    if stopped(policy_step(&mut policy, bus.as_ref(), &service), &mut term, &mut int).await {
+                        break;
                     }
                 }
-            }
-            Some(change) = next_item(&mut ppd_changes) => {
-                if let Ok(profile) = change.get().await {
-                    service.lock().unwrap().set_power_profile(Some(profile));
-                    policy_step(&mut policy, bus.as_ref(), &service).await;
-                }
-            }
+                // power-profiles-daemon went away: look for it again on the tick.
+                None => ppd_following = false,
+            },
             _ = tick.tick() => {
                 // power-profiles-daemon may come up after us: look again every 30 s.
                 ppd_retry += 1;
-                if ppd_changes.is_none() && ppd_retry % 15 == 0 {
+                if !ppd_following && ppd_retry % 15 == 0 {
                     if let Some(conn) = &bus {
-                        ppd_changes = follow_power_profiles(conn, &service).await;
+                        ppd_following = peers::follow_power_profiles(conn, &service, ppd_tx.clone()).await;
                     }
                 }
                 service.lock().unwrap().save_ledger();
-                policy_step(&mut policy, bus.as_ref(), &service).await;
+                // A scheduler switch can take many seconds: stop requests still end it.
+                if stopped(policy_step(&mut policy, bus.as_ref(), &service), &mut term, &mut int).await {
+                    break;
+                }
                 if let Some(conn) = &bus {
                     publish_state(conn, &service, &mut last_state).await;
                 }
@@ -322,67 +327,15 @@ async fn policy_step(policy: &mut Policy, bus: Option<&zbus::Connection>, servic
     svc.policy_report = report;
 }
 
-/// How long a bus call may take while scdrd starts or looks for a peer.
-const BUS_CALL_LIMIT: Duration = Duration::from_secs(3);
-
-/// `fut`, or `None` once it has taken longer than `BUS_CALL_LIMIT`.
-async fn bounded<T>(fut: impl std::future::Future<Output = T>) -> Option<T> {
-    tokio::time::timeout(BUS_CALL_LIMIT, fut).await.ok()
-}
-
-/// Reads power-profiles-daemon's profile and returns its change stream, or `None` when it isn't
-/// there (or doesn't answer in time). It is only asked when it already owns its bus name, so
-/// looking never starts it and never waits for it.
-async fn follow_power_profiles(
-    conn: &zbus::Connection,
-    service: &Arc<Mutex<Service>>,
-) -> Option<zbus::proxy::PropertyStream<'static, String>> {
-    let dbus = bounded(zbus::fdo::DBusProxy::new(conn)).await?.ok()?;
-    let name = zbus::names::BusName::try_from("net.hadess.PowerProfiles").ok()?;
-    if !bounded(dbus.name_has_owner(name)).await?.unwrap_or(false) {
-        tracing::info!("power-profiles-daemon not running; looking again later");
-        return None;
-    }
-    let proxy = bounded(PowerProfilesProxy::new(conn)).await?.ok()?;
-    match bounded(proxy.active_profile()).await {
-        Some(Ok(p)) => {
-            service.lock().unwrap().set_power_profile(Some(p));
-            bounded(proxy.receive_active_profile_changed()).await
-        }
-        Some(Err(e)) => {
-            tracing::info!("power-profiles-daemon not available ({e})");
-            None
-        }
-        None => {
-            tracing::warn!("[SCDR-027] power-profiles-daemon didn't answer in {BUS_CALL_LIMIT:?}; looking again later");
-            None
-        }
-    }
-}
-
-/// Forgets sessions whose agent has left the bus (crashed or logged out).
-async fn drop_dead_agents(conn: &zbus::Connection, service: &Arc<Mutex<Service>>) {
-    let senders = service.lock().unwrap().agent_senders();
-    if senders.is_empty() {
-        return;
-    }
-    let Ok(dbus) = zbus::fdo::DBusProxy::new(conn).await else {
-        return;
-    };
-    for sender in senders {
-        let alive = match zbus::names::BusName::try_from(sender.as_str()) {
-            Ok(name) => dbus.name_has_owner(name).await.unwrap_or(true),
-            Err(_) => false,
-        };
-        if !alive {
-            service.lock().unwrap().drop_agent(&sender);
-        }
-    }
-}
-
-async fn next_item<S: Stream + Unpin>(stream: &mut Option<S>) -> Option<S::Item> {
-    match stream {
-        Some(s) => s.next().await,
-        None => std::future::pending().await,
+/// Runs `step` unless SIGTERM or SIGINT comes first; true when one did (the step is dropped).
+async fn stopped(
+    step: impl std::future::Future<Output = ()>,
+    term: &mut tokio::signal::unix::Signal,
+    int: &mut tokio::signal::unix::Signal,
+) -> bool {
+    tokio::select! {
+        _ = step => false,
+        _ = term.recv() => true,
+        _ = int.recv() => true,
     }
 }

@@ -10,7 +10,7 @@ Process scheduling and priority daemon (`scdrd`) and control tool (`scdrctl`) fo
 - Package for Arch: `cd packaging/arch && makepkg -si`; then `systemctl enable --now scdrd` and `systemctl --user enable --now scdr-session`.
 
 ## Layout
-- `src/bin/scdrd.rs` (daemon) and `src/bin/scdrctl/` (CLI); library in `src/lib.rs` with modules such as `agent`, `apply`, `config`, `import`, `rules`, `service`, `watcher`, `policy`, `schedulers`, `procfs`, `dbus`.
+- `src/bin/scdrd/` (daemon; `peers.rs` holds its bus calls and signal streams) and `src/bin/scdrctl/` (CLI); library in `src/lib.rs` with modules such as `agent`, `apply`, `config`, `import`, `rules`, `service`, `watcher`, `policy`, `schedulers`, `procfs`, `dbus`.
 - `tests/file_length.rs` (line-limit rule) and `tests/cli.rs` (`scdrctl`'s JSON against a throwaway config tree).
 - `data/`: shipped config and units (`scdr.toml`, `scdrd.service`, `scdr-session.service`, `user@-io.conf` drop-in delegating io to user managers, D-Bus and polkit files), plus `kwin/`, `gnome-shell/`, `plasmoid/` (Plasma widget).
 - `packaging/`: `arch/` (PKGBUILD), `aur/` (`scdr`, `scdr-git`), `install.sh`.
