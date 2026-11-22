@@ -31,9 +31,8 @@ jobs:
           toolchain: stable
           components: clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-      # the vendored uq-diag (uQ's native/uq-diag) is the pinned release; the codes match uq/diag/scdr.toml
-      - run: scripts/check-uq-diag.sh 1.0.1 src/uq_diag.rs
-      - run: scripts/check-diag-codes.sh uq/diag/scdr.toml src
+      # uQ's kits (uq/native.toml) are the pinned releases; the codes match uq/diag/scdr.toml
+      - run: scripts/check-uq-native.sh
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
 
