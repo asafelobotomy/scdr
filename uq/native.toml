@@ -5,3 +5,7 @@ version = "1.0.1"
 files = ["src/uq_diag.rs"]
 codes = "uq/diag/scdr.toml"
 sources = ["src"]
+
+[uq-loc]
+version = "1.0.0"
+files = ["scripts/check-loc.sh"]

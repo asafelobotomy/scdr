@@ -33,6 +33,8 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # uQ's kits (uq/native.toml) are the pinned releases; the codes match uq/diag/scdr.toml
       - run: scripts/check-uq-native.sh
+      # Every source file is within 400 lines of code (uQ's uq-loc)
+      - run: scripts/check-loc.sh
       - run: cargo clippy --locked --all-targets -- -D warnings
       # tests/busy_bus.rs runs scdrd on a private dbus-daemon.
       - run: sudo apt-get install -y --no-install-recommends dbus-daemon
