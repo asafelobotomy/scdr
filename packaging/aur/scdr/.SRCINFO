@@ -14,6 +14,7 @@ pkgbase = scdr
 	makedepends = zlib
 	makedepends = dbus
 	makedepends = systemd
+	conflicts = uq<0.3.41
 	source = scdr-0.5.4.tar.gz::https://github.com/asafelobotomy/scdr/releases/download/v0.5.4/scdr-0.5.4.tar.gz
 	sha256sums = SKIP
 

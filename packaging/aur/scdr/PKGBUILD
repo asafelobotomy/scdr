@@ -17,6 +17,8 @@ makedepends=('cargo' 'clang' 'bpf' 'libbpf' 'libelf' 'zlib' 'dbus' 'systemd')
 source=("$pkgbase-$pkgver.tar.gz::$url/releases/download/v$pkgver/$pkgbase-$pkgver.tar.gz")
 sha256sums=('SKIP')
 
+conflicts+=('uq<0.3.41')  # uq-compat: from uQ's compat/family.toml
+
 prepare() {
   cd "$pkgbase-$pkgver"
   export RUSTUP_TOOLCHAIN=stable
