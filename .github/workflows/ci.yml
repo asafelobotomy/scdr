@@ -9,10 +9,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   deny:
     name: Dependency advisories
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: EmbarkStudios/cargo-deny-action@70f81531115945ba6eb6b941ec9d39d063438eb9 # v2
@@ -21,6 +26,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       # Actions are pinned to full commit SHAs (tag in the comment); Dependabot keeps them current.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,6 +51,7 @@ jobs:
   uq:
     name: uQ Settings page
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     env:
       # The uQ release whose `uqctl` checks the page (uq_api 3 is in every release since v0.3.0).
       UQ_TAG: v0.3.37
